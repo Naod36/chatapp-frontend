@@ -212,7 +212,8 @@ export default function ChatDashboard({ user, onLogout }) {
                     last_message_content: c.last_message?.content || "",
                     last_message_time: c.last_message?.created_at || null,
                     other_participant: other,
-                    last_message: c.last_message
+                    last_message: c.last_message,
+                    unread_count: c.unread_count || 0
                 };
             });
 
@@ -365,10 +366,10 @@ export default function ChatDashboard({ user, onLogout }) {
                         });
                     });
                 } else if (data.event === "message_delivered") {
-                    if (activeConvRef.current && activeConvRef.current.id === data.conversation_id && data.user_id !== user.userId) {
+                    if (activeConvRef.current && activeConvRef.current.id === data.conversation_id) {
                         setMessages(prev => {
                             return prev.map(m => {
-                                if (m.sender_id === user.userId && (m.status === "sent" || (m.id && typeof m.id === "string" && m.id.startsWith("temp-")))) {
+                                if (m.sender_id === user.userId && m.status !== "read") {
                                     return { ...m, status: "delivered" };
                                 }
                                 return m;
@@ -378,7 +379,7 @@ export default function ChatDashboard({ user, onLogout }) {
 
                     setConversations(prev => {
                         return prev.map(c => {
-                            if (c.id === data.conversation_id && c.last_message && c.last_message.sender_id === user.userId) {
+                            if (c.id === data.conversation_id && c.last_message && c.last_message.sender_id === user.userId && c.last_message.status !== "read") {
                                 return {
                                     ...c,
                                     last_message: {
@@ -391,10 +392,10 @@ export default function ChatDashboard({ user, onLogout }) {
                         });
                     });
                 } else if (data.event === "read_update") {
-                    if (activeConvRef.current && activeConvRef.current.id === data.conversation_id && data.user_id !== user.userId) {
+                    if (activeConvRef.current && activeConvRef.current.id === data.conversation_id) {
                         setMessages(prev => {
                             return prev.map(m => {
-                                if (m.sender_id === user.userId && m.status !== "read") {
+                                if (m.sender_id === user.userId) {
                                     return { ...m, status: "read" };
                                 }
                                 return m;
