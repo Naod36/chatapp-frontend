@@ -138,6 +138,11 @@ export default function ChatDashboard({ user, onLogout }) {
     const fileInputRef = useRef(null);
     const emojiPickerRef = useRef(null);
 
+    // Scroll-to-bottom and unread pill state
+    const [showScrollBottomBtn, setShowScrollBottomBtn] = useState(false);
+    const [newMessagesBelowCount, setNewMessagesBelowCount] = useState(0);
+    const chatContainerRef = useRef(null);
+
     const socketRef = useRef(null);
     const messageEndRef = useRef(null);
     const typingTimeoutRef = useRef(null);
@@ -160,9 +165,37 @@ export default function ChatDashboard({ user, onLogout }) {
 
     const t = THEME[theme];
 
-    // Scroll to bottom of message thread
+    const scrollToBottom = (smooth = true) => {
+        messageEndRef.current?.scrollIntoView({ behavior: smooth ? "smooth" : "auto" });
+        setNewMessagesBelowCount(0);
+        setShowScrollBottomBtn(false);
+    };
+
+    // Scroll listener on chat thread container
+    const handleChatScroll = () => {
+        const container = chatContainerRef.current;
+        if (!container) return;
+        const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+        if (distanceFromBottom > 120) {
+            setShowScrollBottomBtn(true);
+        } else {
+            setShowScrollBottomBtn(false);
+            setNewMessagesBelowCount(0);
+        }
+    };
+
+    // Auto-scroll when messages change or new active conversation selected
     useEffect(() => {
-        messageEndRef.current?.scrollIntoView({ behavior: "smooth" });
+        const container = chatContainerRef.current;
+        if (!container) return;
+        const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+
+        // If close to bottom or initial load, auto scroll down
+        if (distanceFromBottom <= 180 || newMessagesBelowCount === 0) {
+            scrollToBottom(true);
+        } else {
+            setNewMessagesBelowCount(prev => prev + 1);
+        }
     }, [messages]);
 
     // Load initial conversations list
@@ -235,32 +268,46 @@ export default function ChatDashboard({ user, onLogout }) {
             (data) => {
                 console.log("WebSocket event:", data);
                 if (data.event === "new_message") {
-                    // Update active conversation in real-time
+                    const isCurrentActive = activeConvRef.current && activeConvRef.current.id === data.conversation_id;
+
+                    // Update conversation list item in real-time & move to top
                     setConversations(prev => {
-                        const updated = prev.map(c => {
-                            if (c.id === data.conversation_id) {
-                                return {
-                                    ...c,
-                                    last_message_content: data.message_type === "image" ? "📷 Image" : (data.message_type === "file" ? "📁 File" : data.content),
-                                    last_message_time: data.created_at
-                                };
-                            }
-                            return c;
-                        });
+                        const targetIndex = prev.findIndex(c => c.id === data.conversation_id);
+                        let updatedTarget = null;
 
-                        const selfConv = updated.find(c => !c.other_participant);
-                        const others = updated.filter(c => c.other_participant);
-                        const sortedOthers = others.sort((a, b) => {
-                            const aTime = a.last_message_time ? new Date(a.last_message_time).getTime() : 0;
-                            const bTime = b.last_message_time ? new Date(b.last_message_time).getTime() : 0;
-                            return bTime - aTime;
-                        });
+                        if (targetIndex !== -1) {
+                            const existing = prev[targetIndex];
+                            const snippet = data.message_type === "image" ? "📷 Image" : (data.message_type === "audio" ? "🎙️ Voice message" : (data.message_type === "file" ? "📁 File" : data.content));
+                            updatedTarget = {
+                                ...existing,
+                                last_message_content: snippet,
+                                last_message_time: data.created_at,
+                                last_message: {
+                                    message_id: data.message_id,
+                                    sender_id: data.sender_id,
+                                    content: snippet,
+                                    status: "delivered"
+                                },
+                                unread_count: isCurrentActive ? 0 : ((existing.unread_count || 0) + 1)
+                            };
+                        }
 
-                        return [selfConv, ...sortedOthers].filter(Boolean);
+                        if (!updatedTarget) return prev;
+
+                        // Separate Pinned / Saved Messages from other conversations
+                        const rest = prev.filter(c => c.id !== data.conversation_id);
+                        const selfConv = rest.find(c => !c.other_participant);
+                        const otherConvs = rest.filter(c => c.other_participant);
+
+                        if (!updatedTarget.other_participant) {
+                            return [updatedTarget, ...otherConvs];
+                        } else {
+                            return [selfConv, updatedTarget, ...otherConvs].filter(Boolean);
+                        }
                     });
 
-                    // If incoming message belongs to our selected thread, push to list
-                    if (activeConvRef.current && activeConvRef.current.id === data.conversation_id) {
+                    // If incoming message belongs to our selected thread, push to chat bubble list
+                    if (isCurrentActive) {
                         setMessages(prev => [
                             ...prev,
                             {
@@ -444,6 +491,10 @@ export default function ChatDashboard({ user, onLogout }) {
 
         setActiveConv(conv);
         setMessages([]);
+
+        // Clear unread count badge in sidebar
+        setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, unread_count: 0 } : c));
+
         try {
             const history = await conversationService.getMessages(conv.id);
             const mapped = (history || []).map(m => ({ ...m, id: m.message_id || m.id }));
@@ -925,14 +976,21 @@ export default function ChatDashboard({ user, onLogout }) {
                                                 <div style={{ flex: 1, minWidth: 0 }}>
                                                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                                                         <span style={{ fontSize: 13, fontWeight: "755", color: t.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.display_name}</span>
-                                                        <span style={{ fontSize: 9.5, color: t.textMuted }}>{formatTime(c.last_message_time)}</span>
+                                                        <span style={{ fontSize: 9.5, color: c.unread_count > 0 ? t.accent : t.textMuted, fontWeight: c.unread_count > 0 ? "700" : "normal" }}>{formatTime(c.last_message_time)}</span>
                                                     </div>
-                                                    <p style={{ margin: 0, fontSize: 11.5, color: t.textMuted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "flex", alignItems: "center", gap: 4 }}>
-                                                        {c.last_message && c.last_message.sender_id === user.userId && renderMessageStatus(c.last_message.status, true)}
-                                                        <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
-                                                            {c.last_message_content || "No messages yet"}
-                                                        </span>
-                                                    </p>
+                                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 2 }}>
+                                                        <p style={{ margin: 0, fontSize: 11.5, color: c.unread_count > 0 ? t.text : t.textMuted, fontWeight: c.unread_count > 0 ? "600" : "normal", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "flex", alignItems: "center", gap: 4, flex: 1 }}>
+                                                            {c.last_message && c.last_message.sender_id === user.userId && renderMessageStatus(c.last_message.status, true)}
+                                                            <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+                                                                {c.last_message_content || "No messages yet"}
+                                                            </span>
+                                                        </p>
+                                                        {c.unread_count > 0 && (
+                                                            <div style={{ background: t.accent, color: "#ffffff", borderRadius: 10, padding: "2px 7px", fontSize: 10.5, fontWeight: "700", marginLeft: 6, flexShrink: 0 }}>
+                                                                {c.unread_count}
+                                                            </div>
+                                                        )}
+                                                    </div>
                                                 </div>
                                             </div>
                                         );
@@ -1125,7 +1183,7 @@ export default function ChatDashboard({ user, onLogout }) {
                         </div>
 
                         {/* Interactive Scroll Pane */}
-                        <div className="ht-message-stream">
+                        <div className="ht-message-stream" ref={chatContainerRef} onScroll={handleChatScroll} style={{ position: "relative" }}>
                             {messages.map(m => {
                                 const isSelf = m.sender_id === user.userId;
                                 return (
@@ -1195,6 +1253,41 @@ export default function ChatDashboard({ user, onLogout }) {
                                 );
                             })}
                             <div ref={messageEndRef} />
+
+                            {/* Floating Scroll to Bottom / New Messages Button */}
+                            {showScrollBottomBtn && (
+                                <button
+                                    type="button"
+                                    onClick={() => scrollToBottom(true)}
+                                    style={{
+                                        position: "sticky",
+                                        bottom: 16,
+                                        left: "100%",
+                                        transform: "translateX(-24px)",
+                                        background: t.accent,
+                                        color: "#ffffff",
+                                        border: "none",
+                                        borderRadius: 24,
+                                        padding: newMessagesBelowCount > 0 ? "8px 14px" : "8px 10px",
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 6,
+                                        cursor: "pointer",
+                                        boxShadow: "0 4px 14px rgba(0, 0, 0, 0.25)",
+                                        fontSize: 12,
+                                        fontWeight: "700",
+                                        zIndex: 10,
+                                        transition: "all 0.2s ease"
+                                    }}
+                                >
+                                    <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24">
+                                        <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z" />
+                                    </svg>
+                                    {newMessagesBelowCount > 0 && (
+                                        <span>{newMessagesBelowCount} new {newMessagesBelowCount === 1 ? "message" : "messages"}</span>
+                                    )}
+                                </button>
+                            )}
                         </div>
 
                         {/* Floating Rounded Input Card */}
