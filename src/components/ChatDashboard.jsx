@@ -1254,42 +1254,39 @@ export default function ChatDashboard({ user, onLogout }) {
                                 );
                             })}
                             <div ref={messageEndRef} />
-
-                            {/* Floating Scroll to Bottom / New Messages Button */}
-                            {showScrollBottomBtn && (
-                                <button
-                                    type="button"
-                                    onClick={() => scrollToBottom(true)}
-                                    style={{
-                                        position: "sticky",
-                                        bottom: 16,
-                                        left: "100%",
-                                        transform: "translateX(-24px)",
-                                        background: t.accent,
-                                        color: "#ffffff",
-                                        border: "none",
-                                        borderRadius: 24,
-                                        padding: newMessagesBelowCount > 0 ? "8px 14px" : "8px 10px",
-                                        display: "flex",
-                                        alignItems: "center",
-                                        gap: 6,
-                                        cursor: "pointer",
-                                        boxShadow: "0 4px 14px rgba(0, 0, 0, 0.25)",
-                                        fontSize: 12,
-                                        fontWeight: "700",
-                                        zIndex: 10,
-                                        transition: "all 0.2s ease"
-                                    }}
-                                >
-                                    <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24">
-                                        <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z" />
-                                    </svg>
-                                    {newMessagesBelowCount > 0 && (
-                                        <span>{newMessagesBelowCount} new {newMessagesBelowCount === 1 ? "message" : "messages"}</span>
-                                    )}
-                                </button>
-                            )}
                         </div>
+
+                        {/* Floating Scroll to Bottom / New Messages Pill Button */}
+                        {showScrollBottomBtn && (
+                            <button
+                                type="button"
+                                onClick={() => scrollToBottom(true)}
+                                style={{
+                                    position: "absolute",
+                                    bottom: 84,
+                                    right: 28,
+                                    background: t.accent,
+                                    color: "#ffffff",
+                                    border: "none",
+                                    borderRadius: 30,
+                                    padding: "8px 16px",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 8,
+                                    cursor: "pointer",
+                                    boxShadow: "0 6px 20px rgba(0, 0, 0, 0.35)",
+                                    fontSize: 12,
+                                    fontWeight: "700",
+                                    zIndex: 50,
+                                    transition: "all 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275)"
+                                }}
+                            >
+                                <span>{newMessagesBelowCount > 0 ? `${newMessagesBelowCount} new ${newMessagesBelowCount === 1 ? "message" : "messages"}` : "Latest messages"}</span>
+                                <svg width="14" height="14" fill="currentColor" viewBox="0 0 24 24">
+                                    <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z" />
+                                </svg>
+                            </button>
+                        )}
 
                         {/* Floating Rounded Input Card */}
                         <form className="ht-chat-input-form" onSubmit={handleSendMessage}>
