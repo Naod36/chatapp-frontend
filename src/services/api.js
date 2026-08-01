@@ -1,5 +1,5 @@
-export const API_BASE = "https://chatapp-backend-chyk.onrender.com";
-export const WS_BASE = "wss://chatapp-backend-chyk.onrender.com";
+export const API_BASE = import.meta.env.VITE_API_URL || "https://chatapp-backend-chyk.onrender.com";
+export const WS_BASE = import.meta.env.VITE_WS_URL || "wss://chatapp-backend-chyk.onrender.com";
 
 /**
  * Standard fetch wrapper that automatically sets the Content-Type

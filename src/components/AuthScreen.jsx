@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { gsap } from "gsap";
+import { useGoogleLogin } from "@react-oauth/google";
 import { authService } from "../services/auth";
 
 /**
@@ -15,28 +16,30 @@ import { authService } from "../services/auth";
 
 const THEME = {
     light: {
-        pageBg: "radial-gradient(circle at 50% 50%, #ffffff 0%, #d2d8d4 100%)",
-        cardBg: "rgba(255, 255, 255, 0.82)",
-        cardBorder: "5.5px solid rgba(204, 204, 204, 0.3)",
-        cardShadow: "0 25px 65px rgba(0, 0, 0, 0.05), 0 5px 15px rgba(0, 0, 0, 0.02)",
-        text: "#000000",
-        textMuted: "#878787",
-        inputBorder: "rgba(0, 0, 0, 0.12)",
-        dotColor: "0,0,0", // black halftone dots in rgb
-        buttonBg: "#000000",
+        pageBg: "radial-gradient(circle at 50% 50%, #f4f7fb 0%, #e2e8f0 100%)",
+        cardBg: "rgba(255, 255, 255, 0.88)",
+        cardBorder: "1.5px solid rgba(3, 52, 110, 0.12)",
+        cardShadow: "0 25px 65px rgba(2, 21, 38, 0.08), 0 5px 15px rgba(2, 21, 38, 0.04)",
+        text: "#021526",
+        textMuted: "#64748b",
+        inputBorder: "rgba(3, 52, 110, 0.15)",
+        dotColor: "3,52,110", // #03346E in RGB
+        buttonBg: "#03346E",
         buttonText: "#ffffff",
+        accent: "#6EACDA",
     },
     dark: {
-        pageBg: "radial-gradient(circle at 50% 50%, #161816 0%, #070807 100%)",
-        cardBg: "rgba(18, 19, 18, 0.82)",
-        cardBorder: "5.5px solid rgba(255, 255, 255, 0.12)",
-        cardShadow: "0 25px 65px rgba(0, 0, 0, 0.4)",
-        text: "#f5f5f5",
-        textMuted: "#7a7a7a",
-        inputBorder: "rgba(255, 255, 255, 0.12)",
-        dotColor: "245,245,245", // white halftone dots in rgb
-        buttonBg: "#f5f5f5",
-        buttonText: "#000000",
+        pageBg: "radial-gradient(circle at 50% 50%, #031c33 0%, #021526 100%)",
+        cardBg: "rgba(2, 21, 38, 0.85)",
+        cardBorder: "1.5px solid rgba(110, 172, 218, 0.2)",
+        cardShadow: "0 25px 65px rgba(0, 0, 0, 0.6)",
+        text: "#e2e8f0",
+        textMuted: "#94a3b8",
+        inputBorder: "rgba(110, 172, 218, 0.2)",
+        dotColor: "110,172,218", // #6EACDA in RGB
+        buttonBg: "#03346E",
+        buttonText: "#ffffff",
+        accent: "#6EACDA",
     },
 };
 
@@ -70,13 +73,6 @@ const GoogleIcon = () => (
     </svg>
 );
 
-// Inline Apple logo
-const AppleIcon = ({ color }) => (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill={color}>
-        <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M15.97 4.17c.66-.81 1.11-1.93.99-3.06-1 .04-2.21.67-2.93 1.49-.62.69-1.16 1.84-1.01 2.96 1.12.09 2.27-.55 2.95-1.39z" />
-    </svg>
-);
-
 export default function AuthScreen({ onAuthSuccess }) {
     const [mode, setMode] = useState("signin"); // 'signin' | 'signup'
     const [theme, setTheme] = useState("light");
@@ -87,6 +83,24 @@ export default function AuthScreen({ onAuthSuccess }) {
     const [password, setPassword] = useState("");
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
+
+    // Google OAuth Handler
+    const handleGoogleLogin = useGoogleLogin({
+        onSuccess: async (tokenResponse) => {
+            setLoading(true);
+            setError(null);
+            try {
+                const credential = tokenResponse.access_token || tokenResponse.credential;
+                const authData = await authService.googleLogin(credential);
+                onAuthSuccess(authData);
+            } catch (err) {
+                setError(err.message || "Google Sign In failed");
+            } finally {
+                setLoading(false);
+            }
+        },
+        onError: () => setError("Google Sign In was cancelled or failed"),
+    });
 
     const rootRef = useRef(null);
     const cardRef = useRef(null);
@@ -460,17 +474,14 @@ export default function AuthScreen({ onAuthSuccess }) {
 
             <div
                 ref={cardRef}
+                className="auth-container-card"
                 style={{
                     position: "relative",
-                    width: "100%",
-                    maxWidth: 1040,
                     background: t.cardBg,
                     borderRadius: 24,
                     border: t.cardBorder,
                     boxShadow: t.cardShadow,
-                    display: "flex",
                     overflow: "hidden",
-                    minHeight: 680,
                     transition: "background 0.4s ease, border 0.4s ease",
                     zIndex: 2,
                     backdropFilter: "blur(20px)",
@@ -508,13 +519,12 @@ export default function AuthScreen({ onAuthSuccess }) {
                 >
                     {theme === "light" ? <MoonIcon color={t.text} /> : <SunIcon color={t.text} />}
                 </button>
-                {/* Form area (46% width) */}
+                {/* Form area */}
                 <form
                     onSubmit={handleSubmit}
                     ref={formWrapRef}
+                    className="auth-form-side"
                     style={{
-                        flex: "0 0 46%",
-                        padding: "3.5rem 4rem",
                         display: "flex",
                         flexDirection: "column",
                         justifyContent: "center",
@@ -522,28 +532,34 @@ export default function AuthScreen({ onAuthSuccess }) {
                         zIndex: 2,
                     }}
                 >
-                    {/* Double Slanted Parallelograms (Visual Reference Logo) */}
-                    <svg
-                        className="fx-stagger"
-                        width="28"
-                        height="28"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        xmlns="http://www.w3.org/2000/svg"
-                        style={{ marginBottom: "2.5rem", color: t.text }}
-                    >
-                        <path d="M5.5 17L9.5 7H13.5L9.5 17H5.5Z" fill="currentColor" />
-                        <path d="M12.5 17L16.5 7H20.5L16.5 17H12.5Z" fill="currentColor" />
-                    </svg>
+                    {/* Brand Header (Icon + Animated FlowChat Shimmer & Active Beacon Dot) */}
+                    <div className="fx-stagger flowchat-brand-wrapper">
+                        <svg
+                            className="flowchat-brand-icon"
+                            width="34"
+                            height="34"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            xmlns="http://www.w3.org/2000/svg"
+                            style={{ color: t.text }}
+                        >
+                            <path className="flowchat-icon-bar1" d="M5.5 17L9.5 7H13.5L9.5 17H5.5Z" fill="currentColor" />
+                            <path className="flowchat-icon-bar2" d="M12.5 17L16.5 7H20.5L16.5 17H12.5Z" fill="currentColor" />
+                        </svg>
+                        <span className={`flowchat-brand-name ${theme}`}>
+                            FlowChat
+                        </span>
+                    </div>
 
                     <h1
                         className="fx-stagger"
                         style={{
-                            margin: "0 0 6px",
+                            margin: "0 0 4px",
                             color: t.text,
-                            fontSize: 32,
-                            fontWeight: "800",
-                            letterSpacing: "-0.5px"
+                            fontSize: 22,
+                            fontWeight: "700",
+                            letterSpacing: "-0.3px",
+                            opacity: 0.9
                         }}
                     >
                         {mode === "signin" ? "Sign In" : "Sign Up"}
@@ -553,13 +569,13 @@ export default function AuthScreen({ onAuthSuccess }) {
                         style={{
                             color: t.textMuted,
                             margin: "0 0 1.5rem",
-                            fontSize: 14,
+                            fontSize: 13,
                             fontWeight: "500",
                             letterSpacing: "0.2px"
                         }}
                     >
                         {mode === "signin"
-                            ? "Continue to access your dashboard"
+                            ? "Continue to access your chats"
                             : "Create an account to start chatting"}
                     </p>
 
@@ -588,18 +604,15 @@ export default function AuthScreen({ onAuthSuccess }) {
                         type="button"
                         className="fx-stagger"
                         style={oAuthButtonStyle(t)}
+                        onClick={() => handleGoogleLogin()}
+                        disabled={loading}
                     >
                         <GoogleIcon />
-                        Sign in with Google
-                    </button>
-
-                    <button
-                        type="button"
-                        className="fx-stagger"
-                        style={oAuthButtonStyle(t)}
-                    >
-                        <AppleIcon color={t.text} />
-                        Sign in with Apple
+                        {loading 
+                            ? "Connecting to Google..." 
+                            : mode === "signup" 
+                            ? "Sign up with Google" 
+                            : "Sign in with Google"}
                     </button>
 
                     <div
@@ -733,8 +746,8 @@ export default function AuthScreen({ onAuthSuccess }) {
                 {/* Halftone canvas decoration (54% width) */}
                 <div
                     ref={panelWrapRef}
+                    className="auth-panel-side"
                     style={{
-                        flex: 1,
                         position: "relative",
                         overflow: "hidden",
                         background: "transparent",
@@ -790,10 +803,9 @@ export default function AuthScreen({ onAuthSuccess }) {
                                         color: theme === "light" ? "rgba(0,0,0,0.55)" : "rgba(255,255,255,0.55)"
                                     }}
                                 >
-                                    ACTIVE
+                                    FlowChat Engine
                                 </span>
                             </div>
-
 
                             <h3
                                 style={{
@@ -805,7 +817,7 @@ export default function AuthScreen({ onAuthSuccess }) {
                                     letterSpacing: "-0.4px"
                                 }}
                             >
-                                Conversations, stripped down to raw analog speed.
+                                Seamless real-time conversations in smooth continuous flow.
                             </h3>
                         </div>
                     </div>

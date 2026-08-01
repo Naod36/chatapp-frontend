@@ -53,6 +53,48 @@ html, body {
 }
 
 /* ==========================================================================
+   Auth Screen Responsiveness
+   ========================================================================== */
+.auth-container-card {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  max-width: 1040px;
+  min-height: 680px;
+}
+
+.auth-form-side {
+  flex: 0 0 46%;
+  padding: 3.5rem 4rem;
+}
+
+.auth-panel-side {
+  flex: 1;
+  display: block;
+}
+
+@media (max-width: 900px) {
+  .auth-container-card {
+    flex-direction: column;
+    min-height: auto;
+    max-width: 520px;
+  }
+  .auth-form-side {
+    flex: 1 1 100%;
+    padding: 2.5rem 2rem;
+  }
+  .auth-panel-side {
+    display: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .auth-form-side {
+    padding: 2rem 1.25rem;
+  }
+}
+
+/* ==========================================================================
    HT (Halftone Redesign) Design System Tokens & Utility Classes
    ========================================================================== */
 
@@ -565,3 +607,135 @@ html, body {
 .EmojiPickerReact.epr-dark-theme button.epr-emoji:hover > * {
   background: rgba(255, 255, 255, 0.07) !important;
 }
+
+/* =============================================
+   FlowChat Brand Logo & Continuous Motion Effects
+   ============================================= */
+.flowchat-brand-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 1.75rem;
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+  width: fit-content;
+}
+
+/* Continuous Floating / Pulse Animation on Icon */
+.flowchat-brand-icon {
+  flex-shrink: 0;
+  transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  filter: drop-shadow(0 0 10px rgba(110, 172, 218, 0.25));
+  animation: flowIconFloat 4s ease-in-out infinite;
+}
+
+.flowchat-brand-wrapper:hover .flowchat-brand-icon {
+  transform: rotate(-12deg) scale(1.18);
+  filter: drop-shadow(0 0 16px rgba(110, 172, 218, 0.6));
+}
+
+.flowchat-icon-bar1 {
+  animation: flowBarShift 3s ease-in-out infinite alternate;
+}
+.flowchat-icon-bar2 {
+  animation: flowBarShift 3s ease-in-out infinite alternate-reverse;
+}
+
+@keyframes flowIconFloat {
+  0%, 100% {
+    transform: translateY(0px) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-3px) rotate(2deg);
+  }
+}
+
+@keyframes flowBarShift {
+  0% { opacity: 0.8; }
+  100% { opacity: 1; }
+}
+
+/* Continuous Shimmer & Gradient Flow on Brand Name */
+.flowchat-brand-name {
+  font-size: 27px;
+  font-weight: 900;
+  letter-spacing: -0.8px;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.flowchat-brand-name.dark {
+  background: linear-gradient(
+    110deg,
+    #ffffff 0%,
+    #e0f2fe 25%,
+    #6EACDA 50%,
+    #e0f2fe 75%,
+    #ffffff 100%
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: flowTextShimmer 6s linear infinite;
+}
+
+.flowchat-brand-name.light {
+  background: linear-gradient(
+    110deg,
+    #021526 0%,
+    #03346E 30%,
+    #0284c7 50%,
+    #03346E 70%,
+    #021526 100%
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: flowTextShimmer 6s linear infinite;
+}
+
+@keyframes flowTextShimmer {
+  0% {
+    background-position: 0% center;
+  }
+  100% {
+    background-position: 200% center;
+  }
+}
+
+/* Hover Interaction: Letter-spacing & glow expansion */
+.flowchat-brand-wrapper:hover .flowchat-brand-name {
+  letter-spacing: 0.2px;
+  filter: drop-shadow(0 2px 12px rgba(110, 172, 218, 0.35));
+}
+
+/* Pulsing Active Node Beacon dot right beside text */
+.flowchat-beacon-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #38bdf8;
+  box-shadow: 0 0 10px #38bdf8;
+  display: inline-block;
+  margin-left: 6px;
+  animation: flowBeaconPulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes flowBeaconPulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+    box-shadow: 0 0 10px #38bdf8, 0 0 20px rgba(56, 189, 248, 0.4);
+  }
+  50% {
+    opacity: 0.5;
+    transform: scale(0.75);
+    box-shadow: 0 0 4px #38bdf8, 0 0 8px rgba(56, 189, 248, 0.2);
+  }
+}
+
