@@ -48,7 +48,10 @@ export const authService = {
             localStorage.setItem("chat_userId", data.user_id);
             localStorage.setItem("chat_username", data.username);
 
-            return data;
+            return {
+                ...data,
+                userId: data.user_id
+            };
         } catch (err) {
             if (err.name === "TypeError" || (err.message && (err.message.includes("NetworkError") || err.message.includes("Failed to fetch")))) {
                 throw new Error(`Unable to reach the backend server at ${API_BASE}. Please verify the backend service is running.`);
@@ -74,7 +77,10 @@ export const authService = {
             localStorage.setItem("chat_userId", data.user_id);
             localStorage.setItem("chat_username", data.username);
 
-            return data;
+            return {
+                ...data,
+                userId: data.user_id
+            };
         } catch (err) {
             if (err.name === "TypeError" || (err.message && (err.message.includes("NetworkError") || err.message.includes("Failed to fetch")))) {
                 throw new Error(`Unable to reach the backend server at ${API_BASE}. Please verify the backend service is running.`);
@@ -100,7 +106,10 @@ export const authService = {
             localStorage.setItem("chat_userId", data.user_id);
             localStorage.setItem("chat_username", data.username);
 
-            return data;
+            return {
+                ...data,
+                userId: data.user_id
+            };
         } catch (err) {
             if (err.name === "TypeError" || (err.message && (err.message.includes("NetworkError") || err.message.includes("Failed to fetch")))) {
                 throw new Error(`Unable to reach the backend server at ${API_BASE}. Please verify the backend service is running.`);
@@ -120,8 +129,10 @@ export const authService = {
     },
 
     getCurrentUser() {
+        const id = localStorage.getItem("chat_userId");
         return {
-            userId: localStorage.getItem("chat_userId"),
+            userId: id,
+            user_id: id,
             username: localStorage.getItem("chat_username"),
             token: localStorage.getItem("chat_token")
         };

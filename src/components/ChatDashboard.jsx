@@ -466,9 +466,10 @@ export default function ChatDashboard({ user, onLogout }) {
 
     // Load messages when selecting active conversation
     const handleSelectConversation = async (conv) => {
+        const currentUserId = user?.userId || user?.user_id;
         if (conv.id === "virtual-saved-messages") {
             try {
-                const response = await conversationService.createConversation(user.userId);
+                const response = await conversationService.createConversation(currentUserId);
                 await loadConversations();
 
                 const realSelfConv = {
@@ -566,7 +567,8 @@ export default function ChatDashboard({ user, onLogout }) {
                 return;
             }
 
-            const response = await conversationService.createConversation(user.userId);
+            const currentUserId = user?.userId || user?.user_id;
+            const response = await conversationService.createConversation(currentUserId);
             await loadConversations();
 
             const completeConv = {
