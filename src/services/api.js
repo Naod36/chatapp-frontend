@@ -96,3 +96,66 @@ export async function apiFetch(endpoint, options = {}) {
         throw err;
     }
 }
+
+/**
+ * Uploads a file using XMLHttpRequest to provide real-time progress callbacks:
+ * onProgress({ loaded, total, percentage, loadedFormatted, totalFormatted })
+ */
+export function uploadFileWithProgress(file, onProgress) {
+    return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        const formData = new FormData();
+        formData.append("file", file);
+
+        const token = localStorage.getItem("chat_token");
+
+        xhr.upload.onprogress = (event) => {
+            if (event.lengthComputable && onProgress) {
+                const loaded = event.loaded;
+                const total = event.total;
+                const percentage = Math.round((loaded / total) * 100);
+                const loadedMB = (loaded / (1024 * 1024)).toFixed(1);
+                const totalMB = (total / (1024 * 1024)).toFixed(1);
+
+                onProgress({
+                    loaded,
+                    total,
+                    percentage,
+                    loadedFormatted: `${loadedMB} MB`,
+                    totalFormatted: `${totalMB} MB`
+                });
+            }
+        };
+
+        xhr.onload = () => {
+            let data;
+            const contentType = xhr.getResponseHeader("content-type");
+            if (contentType && contentType.includes("application/json")) {
+                try {
+                    data = JSON.parse(xhr.responseText);
+                } catch {
+                    data = null;
+                }
+            } else {
+                data = xhr.responseText;
+            }
+
+            if (xhr.status >= 200 && xhr.status < 300) {
+                resolve(data);
+            } else {
+                const errMsg = parseErrorMessage({ status: xhr.status }, data);
+                reject(new Error(errMsg));
+            }
+        };
+
+        xhr.onerror = () => {
+            reject(new Error("Network error during file upload. Please check your connection."));
+        };
+
+        xhr.open("POST", `${API_BASE}/upload`);
+        if (token) {
+            xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+        }
+        xhr.send(formData);
+    });
+}

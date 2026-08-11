@@ -131,8 +131,11 @@ export default function ChatDashboard({ user, onLogout }) {
     const [activeRailTab, setActiveRailTab] = useState("chats"); // "chats" | "profile" | "settings"
     const [showInspector, setShowInspector] = useState(true);
     const [myProfile, setMyProfile] = useState({ display_name: user?.username || "", bio: "", avatar_url: "" });
-    const [selectedFile, setSelectedFile] = useState(null);
     const [isUploading, setIsUploading] = useState(false);
+    const [uploadProgress, setUploadProgress] = useState({ percentage: 0, loadedFormatted: "0 MB", totalFormatted: "0 MB" });
+    const [replyingTo, setReplyingTo] = useState(null);
+    const [editingMessage, setEditingMessage] = useState(null);
+    const [contextMenu, setContextMenu] = useState(null);
     const [isSavingProfile, setIsSavingProfile] = useState(false);
     const [filePreview, setFilePreview] = useState(null);
     const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -425,6 +428,10 @@ export default function ChatDashboard({ user, onLogout }) {
                             return c;
                         });
                     });
+                } else if (data.event === "message_edited") {
+                    setMessages(prev => prev.map(m => m.id === data.message_id ? { ...m, content: data.content, is_edited: true } : m));
+                } else if (data.event === "message_deleted") {
+                    setMessages(prev => prev.filter(m => m.id !== data.message_id));
                 } else if (data.event === "user_status") {
                     setConversations(prev => {
                         return prev.map(c => {
@@ -663,20 +670,38 @@ export default function ChatDashboard({ user, onLogout }) {
 
     // Send Message Workflow
     const handleSendMessage = async (e) => {
-        e.preventDefault();
+        if (e) e.preventDefault();
 
         const hasText = messageText.trim().length > 0;
         if (!selectedFile && !hasText) return;
         if (!activeConv || !socketRef.current) return;
+
+        // If editing an existing message
+        if (editingMessage) {
+            socketRef.current.send(JSON.stringify({
+                action: "edit_message",
+                message_id: editingMessage.id,
+                content: messageText.trim()
+            }));
+            setMessages(prev => prev.map(m => m.id === editingMessage.id ? { ...m, content: messageText.trim(), is_edited: true } : m));
+            setEditingMessage(null);
+            setMessageText("");
+            handleStopTypingNotification();
+            return;
+        }
 
         let mType = "text";
         let mediaUrl = null;
         let finalContent = messageText;
 
         setIsUploading(true);
+        setUploadProgress({ percentage: 0, loadedFormatted: "0.0 MB", totalFormatted: selectedFile ? `${(selectedFile.size / (1024 * 1024)).toFixed(1)} MB` : "0.0 MB" });
+
         try {
             if (selectedFile) {
-                const uploadRes = await conversationService.uploadFile(selectedFile);
+                const uploadRes = await conversationService.uploadFile(selectedFile, (progressInfo) => {
+                    setUploadProgress(progressInfo);
+                });
                 mediaUrl = uploadRes.url;
                 mType = selectedFile.type.startsWith("image/") ? "image" : "file";
                 if (!finalContent) {
@@ -684,13 +709,16 @@ export default function ChatDashboard({ user, onLogout }) {
                 }
             }
 
+            const currentReplyToId = replyingTo?.id || null;
+
             // Broadcast to WebSocket Node
             socketRef.current.send(JSON.stringify({
                 action: "send_message",
                 conversation_id: activeConv.id,
                 content: finalContent,
                 message_type: mType,
-                media_url: mediaUrl
+                media_url: mediaUrl,
+                reply_to_id: currentReplyToId
             }));
 
             // Send local optimistic write immediately to avoid wait loop
@@ -700,10 +728,12 @@ export default function ChatDashboard({ user, onLogout }) {
                 content: finalContent,
                 message_type: mType,
                 media_url: mediaUrl,
+                reply_to_id: currentReplyToId,
                 created_at: new Date().toISOString(),
                 status: null
             };
             setMessages(prev => [...prev, localMsg]);
+            setReplyingTo(null);
 
             // Optimistically update conversation list for sender!
             setConversations(prev => {
@@ -751,6 +781,61 @@ export default function ChatDashboard({ user, onLogout }) {
         // Clear input text & clear active typing statuses
         setMessageText("");
         handleStopTypingNotification();
+    };
+
+    // Context Menu & Message Action Handlers
+    const handleContextMenu = (e, msg) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setContextMenu({
+            x: e.clientX,
+            y: e.clientY,
+            message: msg
+        });
+    };
+
+    const handleCloseContextMenu = () => {
+        setContextMenu(null);
+    };
+
+    const handleStartReply = (msg) => {
+        const isSelf = msg.sender_id === user.userId;
+        const senderName = isSelf ? "You" : (activeConv?.other_participant?.username || "Participant");
+        const previewContent = msg.content || (msg.message_type === "image" ? "📷 Image" : (msg.message_type === "audio" ? "🎙️ Voice message" : "📁 Attachment"));
+        setReplyingTo({
+            id: msg.id || msg.message_id,
+            senderName,
+            content: previewContent
+        });
+        handleCloseContextMenu();
+    };
+
+    const handleStartEdit = (msg) => {
+        setEditingMessage({
+            id: msg.id || msg.message_id,
+            content: msg.content
+        });
+        setMessageText(msg.content || "");
+        handleCloseContextMenu();
+    };
+
+    const handleDeleteMsg = (msg) => {
+        const targetId = msg.id || msg.message_id;
+        if (socketRef.current) {
+            socketRef.current.send(JSON.stringify({
+                action: "delete_message",
+                message_id: targetId
+            }));
+        }
+        setMessages(prev => prev.filter(m => (m.id || m.message_id) !== targetId));
+        handleCloseContextMenu();
+    };
+
+    const handleCopyMsgText = (msg) => {
+        if (msg.content) {
+            navigator.clipboard.writeText(msg.content);
+        }
+        handleCloseContextMenu();
     };
 
     // Send typing status to WebSocket Node
@@ -1244,11 +1329,13 @@ export default function ChatDashboard({ user, onLogout }) {
                         </div>
 
                         {/* Interactive Scroll Pane */}
-                        <div className="ht-message-stream" ref={chatContainerRef} onScroll={handleChatScroll} style={{ position: "relative" }}>
+                        <div className="ht-message-stream" ref={chatContainerRef} onScroll={handleChatScroll} onClick={handleCloseContextMenu} style={{ position: "relative" }}>
                             {messages.map(m => {
                                 const isSelf = m.sender_id === user.userId;
+                                const parentMsg = m.reply_to_id ? messages.find(msg => (msg.id || msg.message_id) === m.reply_to_id) : null;
+
                                 return (
-                                    <div key={m.id} className={`ht-msg-row ${isSelf ? "self" : "recv"}`}>
+                                    <div id={`msg-${m.id || m.message_id}`} key={m.id || m.message_id} className={`ht-msg-row ${isSelf ? "self" : "recv"}`}>
                                         <div className="ht-msg-avatar">
                                             {isSelf ? (
                                                 myProfile.avatar_url ? (
@@ -1265,7 +1352,37 @@ export default function ChatDashboard({ user, onLogout }) {
                                             )}
                                         </div>
                                         <div className="ht-msg-bubble-box">
-                                            <div className="ht-msg-bubble" style={{ background: isSelf ? t.bubbleSent : t.bubbleRecv, color: isSelf ? t.bubbleSentText : t.bubbleRecvText, padding: m.message_type === "image" ? "6px" : "12px 16px" }}>
+                                            <div
+                                                className="ht-msg-bubble"
+                                                onContextMenu={(e) => handleContextMenu(e, m)}
+                                                style={{ background: isSelf ? t.bubbleSent : t.bubbleRecv, color: isSelf ? t.bubbleSentText : t.bubbleRecvText, padding: m.message_type === "image" ? "6px" : "12px 16px", cursor: "context-menu" }}
+                                            >
+                                                {m.reply_to_id && (
+                                                    <div
+                                                        style={{
+                                                            borderLeft: `3px solid ${isSelf ? "#ffffff" : t.accent}`,
+                                                            background: "rgba(0, 0, 0, 0.15)",
+                                                            padding: "4px 8px",
+                                                            borderRadius: "4px",
+                                                            fontSize: "11px",
+                                                            marginBottom: "6px",
+                                                            cursor: "pointer"
+                                                        }}
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            const el = document.getElementById(`msg-${m.reply_to_id}`);
+                                                            if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+                                                        }}
+                                                    >
+                                                        <div style={{ fontWeight: 700, fontSize: "10px", opacity: 0.9 }}>
+                                                            Replying to message
+                                                        </div>
+                                                        <div style={{ opacity: 0.85, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap", maxWidth: "200px" }}>
+                                                            {parentMsg?.content || "Quoted attachment"}
+                                                        </div>
+                                                    </div>
+                                                )}
+
                                                 {m.message_type === "image" ? (
                                                     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                                                         <img
@@ -1305,8 +1422,9 @@ export default function ChatDashboard({ user, onLogout }) {
                                                     m.content
                                                 )}
                                             </div>
-                                            <span style={{ fontSize: 9.5, color: t.textMuted, marginTop: 4, display: "flex", alignItems: "center", gap: 3 }}>
+                                            <span style={{ fontSize: 9.5, color: t.textMuted, marginTop: 4, display: "flex", alignItems: "center", gap: 4 }}>
                                                 {formatTime(m.created_at)}
+                                                {m.is_edited && <span style={{ fontStyle: "italic", opacity: 0.7 }}>(edited)</span>}
                                                 {isSelf && renderMessageStatus(m.status, false)}
                                             </span>
                                         </div>
@@ -1348,8 +1466,165 @@ export default function ChatDashboard({ user, onLogout }) {
                             </button>
                         )}
 
+                        {/* Right-Click Message Context Menu */}
+                        {contextMenu && (
+                            <div
+                                style={{
+                                    position: "fixed",
+                                    top: contextMenu.y,
+                                    left: contextMenu.x,
+                                    zIndex: 10000,
+                                    background: "rgba(20, 25, 35, 0.96)",
+                                    backdropFilter: "blur(14px)",
+                                    border: "1px solid rgba(255, 255, 255, 0.12)",
+                                    borderRadius: "12px",
+                                    boxShadow: "0 12px 36px rgba(0, 0, 0, 0.5)",
+                                    padding: "6px",
+                                    minWidth: "160px",
+                                    display: "flex",
+                                    flexDirection: "column",
+                                    gap: "2px"
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                            >
+                                <button
+                                    type="button"
+                                    onClick={() => handleStartReply(contextMenu.message)}
+                                    style={{
+                                        background: "transparent",
+                                        border: "none",
+                                        color: "#ffffff",
+                                        padding: "8px 12px",
+                                        borderRadius: "8px",
+                                        fontSize: "13px",
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: "10px",
+                                        cursor: "pointer",
+                                        textAlign: "left"
+                                    }}
+                                    onMouseOver={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.1)"}
+                                    onMouseOut={(e) => e.currentTarget.style.background = "transparent"}
+                                >
+                                    💬 Reply
+                                </button>
+
+                                {contextMenu.message.content && (
+                                    <button
+                                        type="button"
+                                        onClick={() => handleCopyMsgText(contextMenu.message)}
+                                        style={{
+                                            background: "transparent",
+                                            border: "none",
+                                            color: "#ffffff",
+                                            padding: "8px 12px",
+                                            borderRadius: "8px",
+                                            fontSize: "13px",
+                                            display: "flex",
+                                            alignItems: "center",
+                                            gap: "10px",
+                                            cursor: "pointer",
+                                            textAlign: "left"
+                                        }}
+                                        onMouseOver={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.1)"}
+                                        onMouseOut={(e) => e.currentTarget.style.background = "transparent"}
+                                    >
+                                        📋 Copy Text
+                                    </button>
+                                )}
+
+                                {contextMenu.message.sender_id === user.userId && contextMenu.message.message_type === "text" && (
+                                    <button
+                                        type="button"
+                                        onClick={() => handleStartEdit(contextMenu.message)}
+                                        style={{
+                                            background: "transparent",
+                                            border: "none",
+                                            color: "#ffffff",
+                                            padding: "8px 12px",
+                                            borderRadius: "8px",
+                                            fontSize: "13px",
+                                            display: "flex",
+                                            alignItems: "center",
+                                            gap: "10px",
+                                            cursor: "pointer",
+                                            textAlign: "left"
+                                        }}
+                                        onMouseOver={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.1)"}
+                                        onMouseOut={(e) => e.currentTarget.style.background = "transparent"}
+                                    >
+                                        ✏️ Edit Message
+                                    </button>
+                                )}
+
+                                {contextMenu.message.sender_id === user.userId && (
+                                    <button
+                                        type="button"
+                                        onClick={() => handleDeleteMsg(contextMenu.message)}
+                                        style={{
+                                            background: "transparent",
+                                            border: "none",
+                                            color: "#ef4444",
+                                            padding: "8px 12px",
+                                            borderRadius: "8px",
+                                            fontSize: "13px",
+                                            display: "flex",
+                                            alignItems: "center",
+                                            gap: "10px",
+                                            cursor: "pointer",
+                                            textAlign: "left",
+                                            fontWeight: 600
+                                        }}
+                                        onMouseOver={(e) => e.currentTarget.style.background = "rgba(239, 68, 68, 0.15)"}
+                                        onMouseOut={(e) => e.currentTarget.style.background = "transparent"}
+                                    >
+                                        🗑️ Delete Message
+                                    </button>
+                                )}
+                            </div>
+                        )}
+
                         {/* Floating Rounded Input Card */}
                         <form className="ht-chat-input-form" onSubmit={handleSendMessage}>
+                            {replyingTo && (
+                                <div style={{
+                                    padding: "8px 14px",
+                                    marginBottom: 8,
+                                    background: "rgba(56, 189, 248, 0.12)",
+                                    borderLeft: `4px solid ${t.accent}`,
+                                    borderRadius: "10px",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "space-between",
+                                    fontSize: "12px"
+                                }}>
+                                    <div>
+                                        <span style={{ fontWeight: 700, color: t.accent }}>Replying to {replyingTo.senderName}: </span>
+                                        <span style={{ color: t.text, opacity: 0.85 }}>{replyingTo.content}</span>
+                                    </div>
+                                    <button type="button" onClick={() => setReplyingTo(null)} style={{ background: "none", border: "none", color: t.textMuted, cursor: "pointer", fontSize: "14px", fontWeight: "bold" }}>✕</button>
+                                </div>
+                            )}
+
+                            {editingMessage && (
+                                <div style={{
+                                    padding: "8px 14px",
+                                    marginBottom: 8,
+                                    background: "rgba(234, 179, 8, 0.12)",
+                                    borderLeft: "4px solid #eab308",
+                                    borderRadius: "10px",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "space-between",
+                                    fontSize: "12px"
+                                }}>
+                                    <div>
+                                        <span style={{ fontWeight: 700, color: "#eab308" }}>Editing message</span>
+                                    </div>
+                                    <button type="button" onClick={() => { setEditingMessage(null); setMessageText(""); }} style={{ background: "none", border: "none", color: t.textMuted, cursor: "pointer", fontSize: "14px", fontWeight: "bold" }}>✕</button>
+                                </div>
+                            )}
+
                             {selectedFile && (
                                 <div style={{
                                     background: t.cardBg,
@@ -1403,15 +1678,17 @@ export default function ChatDashboard({ user, onLogout }) {
 
                             {isUploading && (
                                 <div style={{ padding: "6px 12px 10px", width: "100%", boxSizing: "border-box" }}>
-                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, fontWeight: 600, color: t.textMuted }}>
+                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, fontWeight: 600, color: t.textMuted, marginBottom: 4 }}>
                                         <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
                                             <span className="flowchat-beacon-dot" style={{ width: 6, height: 6, margin: 0 }}></span>
                                             Uploading attachment...
                                         </span>
-                                        <span style={{ fontSize: 10, opacity: 0.75, fontWeight: 500 }}>Encrypting & Sending</span>
+                                        <span style={{ fontSize: 11, fontWeight: 700, color: "#38bdf8" }}>
+                                            {uploadProgress.loadedFormatted} / {uploadProgress.totalFormatted} • {uploadProgress.percentage}%
+                                        </span>
                                     </div>
                                     <div className="ht-upload-progress-container">
-                                        <div className="ht-upload-progress-bar"></div>
+                                        <div className="ht-upload-progress-bar-real" style={{ width: `${uploadProgress.percentage}%` }}></div>
                                     </div>
                                 </div>
                             )}

@@ -773,4 +773,12 @@ html, body {
   animation: uploadLineIndeterminate 1.5s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
+.ht-upload-progress-bar-real {
+  height: 100%;
+  border-radius: 99px;
+  background: linear-gradient(90deg, #03346E, #38bdf8, #818cf8);
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.7);
+  transition: width 0.15s ease-out;
+}
+
 

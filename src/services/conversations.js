@@ -1,4 +1,4 @@
-import { apiFetch } from "./api";
+import { apiFetch, uploadFileWithProgress } from "./api";
 
 /**
  * Conversations Service
@@ -21,7 +21,10 @@ export const conversationService = {
         return apiFetch(`/conversations/${conversationId}/messages`);
     },
 
-    async uploadFile(file) {
+    async uploadFile(file, onProgress) {
+        if (onProgress) {
+            return uploadFileWithProgress(file, onProgress);
+        }
         const formData = new FormData();
         formData.append("file", file);
         return apiFetch("/upload", {
