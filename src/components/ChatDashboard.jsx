@@ -131,6 +131,7 @@ export default function ChatDashboard({ user, onLogout }) {
     const [activeRailTab, setActiveRailTab] = useState("chats"); // "chats" | "profile" | "settings"
     const [showInspector, setShowInspector] = useState(true);
     const [myProfile, setMyProfile] = useState({ display_name: user?.username || "", bio: "", avatar_url: "" });
+    const [selectedFile, setSelectedFile] = useState(null);
     const [isUploading, setIsUploading] = useState(false);
     const [uploadProgress, setUploadProgress] = useState({ percentage: 0, loadedFormatted: "0 MB", totalFormatted: "0 MB" });
     const [replyingTo, setReplyingTo] = useState(null);
