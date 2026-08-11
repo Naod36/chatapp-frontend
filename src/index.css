@@ -739,3 +739,38 @@ html, body {
   }
 }
 
+/* =============================================
+   Upload Progress Line Animation (Left to Right)
+   ============================================= */
+@keyframes uploadLineIndeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  60% {
+    transform: translateX(100%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
+}
+
+.ht-upload-progress-container {
+  width: 100%;
+  height: 4px;
+  background: rgba(120, 120, 120, 0.15);
+  border-radius: 99px;
+  overflow: hidden;
+  position: relative;
+  margin-top: 6px;
+}
+
+.ht-upload-progress-bar {
+  height: 100%;
+  width: 50%;
+  border-radius: 99px;
+  background: linear-gradient(90deg, #03346E, #38bdf8, #818cf8, #38bdf8);
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.7);
+  animation: uploadLineIndeterminate 1.5s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+

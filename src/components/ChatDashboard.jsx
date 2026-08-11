@@ -1344,8 +1344,17 @@ export default function ChatDashboard({ user, onLogout }) {
                             )}
 
                             {isUploading && (
-                                <div style={{ fontSize: 11, color: t.accent, padding: "4px 8px 8px" }}>
-                                    Uploading attachment to database storage...
+                                <div style={{ padding: "6px 12px 10px", width: "100%", boxSizing: "border-box" }}>
+                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, fontWeight: 600, color: t.textMuted }}>
+                                        <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                            <span className="flowchat-beacon-dot" style={{ width: 6, height: 6, margin: 0 }}></span>
+                                            Uploading attachment...
+                                        </span>
+                                        <span style={{ fontSize: 10, opacity: 0.75, fontWeight: 500 }}>Encrypting & Sending</span>
+                                    </div>
+                                    <div className="ht-upload-progress-container">
+                                        <div className="ht-upload-progress-bar"></div>
+                                    </div>
                                 </div>
                             )}
 
