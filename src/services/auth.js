@@ -15,16 +15,24 @@ async function handleResponse(response, defaultMsg) {
             data = null;
         }
     } else {
-        await response.text().catch(() => "");
-        data = null;
+        data = await response.text().catch(() => "");
     }
 
     if (!response.ok) {
         if (!data) {
-            throw new Error("Unable to connect to the authentication server. Please check your backend connection.");
+            throw new Error(defaultMsg || "Authentication server error. Please check your connection.");
         }
-        const errMsg = typeof data === "string" ? data : (data.message || data.error || defaultMsg);
-        throw new Error(errMsg);
+        if (typeof data === "object") {
+            const msg = data.message || data.error || defaultMsg;
+            throw new Error(msg);
+        }
+        if (typeof data === "string" && data.trim()) {
+            if (data.includes("<html") || data.includes("<!DOCTYPE")) {
+                throw new Error(defaultMsg || "Authentication failed due to a server error.");
+            }
+            throw new Error(data.trim());
+        }
+        throw new Error(defaultMsg);
     }
 
     return data;

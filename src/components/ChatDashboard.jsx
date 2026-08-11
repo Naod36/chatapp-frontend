@@ -118,6 +118,14 @@ export default function ChatDashboard({ user, onLogout }) {
     const [isSearching, setIsSearching] = useState(false);
     const [wsConnected, setWsConnected] = useState(false);
     const [typingUsers, setTypingUsers] = useState({}); // { [convId]: { [userId]: boolean } }
+    const [errorToast, setErrorToast] = useState(null);
+
+    const showError = (msg) => {
+        setErrorToast(msg);
+        setTimeout(() => {
+            setErrorToast(null);
+        }, 5000);
+    };
 
     // UI redesign states
     const [activeRailTab, setActiveRailTab] = useState("chats"); // "chats" | "profile" | "settings"
@@ -735,7 +743,7 @@ export default function ChatDashboard({ user, onLogout }) {
             handleStopTypingNotification();
         } catch (err) {
             console.error("Failed to send message / upload file:", err);
-            alert("Error sending attachment: " + err.message);
+            showError(err.message || "Failed to send attachment. Please try again.");
         } finally {
             setIsUploading(false);
         }
@@ -801,6 +809,56 @@ export default function ChatDashboard({ user, onLogout }) {
 
     return (
         <div className="ht-app-container" style={{ background: t.chatBg, color: t.text }}>
+            {errorToast && (
+                <div style={{
+                    position: "fixed",
+                    top: 20,
+                    left: "50%",
+                    transform: "translateX(-50%)",
+                    zIndex: 9999,
+                    background: "rgba(220, 38, 38, 0.94)",
+                    backdropFilter: "blur(12px)",
+                    color: "#ffffff",
+                    padding: "12px 20px",
+                    borderRadius: "14px",
+                    fontSize: "13px",
+                    fontWeight: 600,
+                    boxShadow: "0 10px 30px rgba(220, 38, 38, 0.4)",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "12px",
+                    maxWidth: "90%",
+                    animation: "fadeIn 0.3s ease"
+                }}>
+                    <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24" style={{ flexShrink: 0 }}>
+                        <circle cx="12" cy="12" r="10" />
+                        <line x1="12" y1="8" x2="12" y2="12" />
+                        <line x1="12" y1="16" x2="12.01" y2="16" />
+                    </svg>
+                    <span>{errorToast}</span>
+                    <button
+                        onClick={() => setErrorToast(null)}
+                        style={{
+                            background: "rgba(255, 255, 255, 0.2)",
+                            border: "none",
+                            borderRadius: "50%",
+                            width: "22px",
+                            height: "22px",
+                            color: "#ffffff",
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            marginLeft: "10px",
+                            fontSize: "12px",
+                            fontWeight: 700
+                        }}
+                    >
+                        ✕
+                    </button>
+                </div>
+            )}
+
             {/* 1. Far Left Rail Navigation */}
             <div className="ht-rail">
                 <div className="ht-rail-top">
