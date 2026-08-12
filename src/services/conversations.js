@@ -42,5 +42,12 @@ export const conversationService = {
             method: "POST",
             body: formData,
         });
+    },
+
+    async updateGroup(conversationId, data) {
+        return apiFetch(`/conversations/${conversationId}`, {
+            method: "PUT",
+            body: JSON.stringify(data)
+        });
     }
 };
