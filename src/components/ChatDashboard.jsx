@@ -195,6 +195,18 @@ export default function ChatDashboard({ user, onLogout }) {
     });
     const [isHeaderMenuOpen, setIsHeaderMenuOpen] = useState(false);
     const [viewingParticipantProfile, setViewingParticipantProfile] = useState(null);
+    const [isRailExpanded, setIsRailExpanded] = useState(() => {
+        const saved = localStorage.getItem("chat_rail_expanded");
+        return saved !== null ? saved === "true" : true;
+    });
+
+    const toggleRailExpanded = () => {
+        setIsRailExpanded(prev => {
+            const next = !prev;
+            localStorage.setItem("chat_rail_expanded", String(next));
+            return next;
+        });
+    };
 
     // Dynamic document title tab unread indicator
     useEffect(() => {
@@ -1681,43 +1693,107 @@ export default function ChatDashboard({ user, onLogout }) {
             )}
 
             {/* 1. Far Left Rail Navigation */}
-            <div className="ht-rail">
+            <div className={`ht-rail ${isRailExpanded ? "expanded" : ""}`}>
                 <div className="ht-rail-top">
-                    <div className="ht-rail-avatar" onClick={() => setActiveRailTab("profile")} title="My Profile">
-                        {myProfile?.avatar_url ? (
-                            <img src={myProfile.avatar_url} alt="Profile" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                        ) : (
-                            user?.username?.[0]?.toUpperCase() || "U"
-                        )}
-                    </div>
+                    {/* Top Header & Toggle Button */}
+                    {isRailExpanded ? (
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", paddingBottom: 10, borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+                            <div
+                                onClick={() => setActiveRailTab("profile")}
+                                style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", minWidth: 0, flex: 1 }}
+                                title="View Profile"
+                            >
+                                <div className="ht-rail-avatar" style={{ width: 34, height: 34, margin: 0, border: "1.5px solid rgba(56, 189, 248, 0.5)" }}>
+                                    {myProfile?.avatar_url ? (
+                                        <img src={myProfile.avatar_url} alt="Profile" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                                    ) : (
+                                        user?.username?.[0]?.toUpperCase() || "U"
+                                    )}
+                                </div>
+                                <div style={{ minWidth: 0, flex: 1 }}>
+                                    <div style={{ fontSize: 13, fontWeight: 800, color: "#fff", textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap", letterSpacing: "-0.2px" }}>
+                                        {myProfile?.display_name || user?.username}
+                                    </div>
+                                    <div style={{ fontSize: 10.5, color: "rgba(255,255,255,0.5)", textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>
+                                        @{user?.username}
+                                    </div>
+                                </div>
+                            </div>
 
+                            <button
+                                type="button"
+                                className="ht-rail-toggle-btn"
+                                onClick={toggleRailExpanded}
+                                title="Collapse Sidebar"
+                                style={{ marginLeft: 6 }}
+                            >
+                                <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
+                                </svg>
+                            </button>
+                        </div>
+                    ) : (
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, width: "100%", marginBottom: 8 }}>
+                            <button
+                                type="button"
+                                className="ht-rail-toggle-btn"
+                                onClick={toggleRailExpanded}
+                                title="Expand Sidebar"
+                                style={{ width: 40, height: 40 }}
+                            >
+                                <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+                                </svg>
+                            </button>
+                            <div className="ht-rail-avatar" onClick={() => setActiveRailTab("profile")} title="My Profile" style={{ margin: 0 }}>
+                                {myProfile?.avatar_url ? (
+                                    <img src={myProfile.avatar_url} alt="Profile" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                                ) : (
+                                    user?.username?.[0]?.toUpperCase() || "U"
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Navigation Menu */}
                     <div className="ht-rail-menu">
                         <button className={`ht-rail-btn ${activeRailTab === "chats" ? "active" : ""}`} onClick={() => setActiveRailTab("chats")} title="Messages">
-                            <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                            <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" style={{ flexShrink: 0 }}>
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
                             </svg>
+                            {isRailExpanded && <span className="ht-rail-btn-label">Chats</span>}
                         </button>
 
                         <button className={`ht-rail-btn ${activeRailTab === "profile" ? "active" : ""}`} onClick={() => setActiveRailTab("profile")} title="Profile Details">
-                            <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                            <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" style={{ flexShrink: 0 }}>
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                             </svg>
+                            {isRailExpanded && <span className="ht-rail-btn-label">Profile</span>}
                         </button>
 
                         <button className={`ht-rail-btn ${activeRailTab === "settings" ? "active" : ""}`} onClick={() => setActiveRailTab("settings")} title="Preferences">
-                            <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                            <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" style={{ flexShrink: 0 }}>
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                             </svg>
+                            {isRailExpanded && <span className="ht-rail-btn-label">Settings</span>}
                         </button>
                     </div>
                 </div>
 
-                <div className="ht-rail-bottom">
-                    <button className="ht-rail-btn" onClick={onLogout} title="Log Out" style={{ color: "#EA4335" }}>
-                        <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                {/* Footer Log Out Button */}
+                <div className="ht-rail-bottom" style={{ width: "100%" }}>
+                    <button
+                        type="button"
+                        className="ht-rail-btn"
+                        onClick={onLogout}
+                        title="Log Out"
+                        style={{ color: "#ef4444", width: "100%" }}
+                    >
+                        <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" style={{ flexShrink: 0 }}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
                         </svg>
+                        {isRailExpanded && <span className="ht-rail-btn-label" style={{ color: "#ef4444" }}>Log Out</span>}
                     </button>
                 </div>
             </div>
@@ -2361,97 +2437,215 @@ export default function ChatDashboard({ user, onLogout }) {
                 )}
 
                 {activeRailTab === "settings" && (
-                    <div style={{ padding: 20, display: "flex", flexDirection: "column", height: "100%", overflowY: "auto" }}>
-                        <h2 style={{ margin: "0 0 20px", fontSize: 20, fontWeight: "800", color: t.text }}>System Settings</h2>
+                    <div style={{ padding: "24px 20px", display: "flex", flexDirection: "column", height: "100%", overflowY: "auto" }}>
+                        <div style={{ marginBottom: 24 }}>
+                            <h2 style={{ margin: 0, fontSize: 20, fontWeight: "800", color: t.text, letterSpacing: "-0.3px" }}>Settings</h2>
+                            <div style={{ fontSize: 12, color: t.textMuted, marginTop: 3 }}>Manage your client preferences & options</div>
+                        </div>
 
-                        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-                            {/* Theme & Appearance */}
+                        <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+                            {/* Section 1: Appearance */}
                             <div>
-                                <div className="ht-section-label" style={{ color: t.textMuted, paddingLeft: 0, marginBottom: 8 }}>Appearance & Theme</div>
-                                <div style={{ display: "flex", gap: 10 }}>
+                                <div style={{ fontSize: 11, fontWeight: 700, color: t.textMuted, letterSpacing: "0.8px", textTransform: "uppercase", marginBottom: 8 }}>
+                                    Appearance
+                                </div>
+                                <div style={{ background: t.cardBg, borderRadius: 12, border: t.border, overflow: "hidden" }}>
+                                    {/* Light Mode Radio Option */}
                                     <div
-                                        className="ht-theme-card"
-                                        onClick={() => { setTheme("light"); localStorage.setItem("theme_preference", "light"); }}
-                                        style={{ flex: 1, background: theme === "light" ? "rgba(56, 189, 248, 0.12)" : "rgba(120, 120, 120, 0.05)", border: theme === "light" ? `1.5px solid ${t.accent}` : "1.5px solid transparent", borderRadius: 12, padding: 12, cursor: "pointer" }}
+                                        onClick={() => {
+                                            setTheme("light");
+                                            localStorage.setItem("theme_preference", "light");
+                                        }}
+                                        style={{
+                                            padding: "14px 16px",
+                                            display: "flex",
+                                            alignItems: "center",
+                                            justifyContent: "space-between",
+                                            cursor: "pointer",
+                                            borderBottom: t.border,
+                                            background: theme === "light" ? "rgba(56, 189, 248, 0.05)" : "transparent"
+                                        }}
                                     >
-                                        <div style={{ fontSize: 13, fontWeight: "700", color: t.text }}>Light Mode</div>
-                                        <div style={{ fontSize: 10, color: t.textMuted, marginTop: 2 }}>Clean high contrast</div>
+                                        <div>
+                                            <div style={{ fontSize: 13.5, fontWeight: 700, color: t.text }}>Light Mode</div>
+                                            <div style={{ fontSize: 11, color: t.textMuted, marginTop: 2 }}>High-contrast clean theme</div>
+                                        </div>
+                                        <div style={{
+                                            width: 18,
+                                            height: 18,
+                                            borderRadius: "50%",
+                                            border: theme === "light" ? `2px solid ${t.accent}` : "2px solid rgba(140,140,140,0.4)",
+                                            display: "flex",
+                                            alignItems: "center",
+                                            justifyContent: "center",
+                                            flexShrink: 0
+                                        }}>
+                                            {theme === "light" && <div style={{ width: 8, height: 8, borderRadius: "50%", background: t.accent }} />}
+                                        </div>
                                     </div>
+
+                                    {/* Dark Mode Radio Option */}
                                     <div
-                                        className="ht-theme-card"
-                                        onClick={() => { setTheme("dark"); localStorage.setItem("theme_preference", "dark"); }}
-                                        style={{ flex: 1, background: theme === "dark" ? "rgba(56, 189, 248, 0.12)" : "rgba(120, 120, 120, 0.05)", border: theme === "dark" ? `1.5px solid ${t.accent}` : "1.5px solid transparent", borderRadius: 12, padding: 12, cursor: "pointer" }}
+                                        onClick={() => {
+                                            setTheme("dark");
+                                            localStorage.setItem("theme_preference", "dark");
+                                        }}
+                                        style={{
+                                            padding: "14px 16px",
+                                            display: "flex",
+                                            alignItems: "center",
+                                            justifyContent: "space-between",
+                                            cursor: "pointer",
+                                            background: theme === "dark" ? "rgba(56, 189, 248, 0.05)" : "transparent"
+                                        }}
                                     >
-                                        <div style={{ fontSize: 13, fontWeight: "700", color: t.text }}>Dark Mode</div>
-                                        <div style={{ fontSize: 10, color: t.textMuted, marginTop: 2 }}>Sleek dark theme</div>
+                                        <div>
+                                            <div style={{ fontSize: 13.5, fontWeight: 700, color: t.text }}>Dark Mode</div>
+                                            <div style={{ fontSize: 11, color: t.textMuted, marginTop: 2 }}>Low-light sleek interface</div>
+                                        </div>
+                                        <div style={{
+                                            width: 18,
+                                            height: 18,
+                                            borderRadius: "50%",
+                                            border: theme === "dark" ? `2px solid ${t.accent}` : "2px solid rgba(140,140,140,0.4)",
+                                            display: "flex",
+                                            alignItems: "center",
+                                            justifyContent: "center",
+                                            flexShrink: 0
+                                        }}>
+                                            {theme === "dark" && <div style={{ width: 8, height: 8, borderRadius: "50%", background: t.accent }} />}
+                                        </div>
                                     </div>
                                 </div>
                             </div>
 
-                            {/* Notifications */}
+                            {/* Section 2: Notifications */}
                             <div>
-                                <div className="ht-section-label" style={{ color: t.textMuted, paddingLeft: 0, marginBottom: 8 }}>Notifications & Sounds</div>
-                                <div
-                                    onClick={toggleSoundEnabled}
-                                    style={{ background: "rgba(120, 120, 120, 0.05)", border: t.border, borderRadius: 12, padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" }}
-                                >
-                                    <div>
-                                        <div style={{ fontSize: 13, fontWeight: 700, color: t.text }}>Message Sound Effects</div>
-                                        <div style={{ fontSize: 10.5, color: t.textMuted }}>Play chime when receiving messages</div>
+                                <div style={{ fontSize: 11, fontWeight: 700, color: t.textMuted, letterSpacing: "0.8px", textTransform: "uppercase", marginBottom: 8 }}>
+                                    Message Audio
+                                </div>
+                                <div style={{ background: t.cardBg, borderRadius: 12, border: t.border, overflow: "hidden" }}>
+                                    {/* Audio Enabled Radio */}
+                                    <div
+                                        onClick={() => soundEnabled || toggleSoundEnabled()}
+                                        style={{
+                                            padding: "14px 16px",
+                                            display: "flex",
+                                            alignItems: "center",
+                                            justifyContent: "space-between",
+                                            cursor: "pointer",
+                                            borderBottom: t.border,
+                                            background: soundEnabled ? "rgba(56, 189, 248, 0.05)" : "transparent"
+                                        }}
+                                    >
+                                        <div>
+                                            <div style={{ fontSize: 13.5, fontWeight: 700, color: t.text }}>Sound Chimes Enabled</div>
+                                            <div style={{ fontSize: 11, color: t.textMuted, marginTop: 2 }}>Play audio chime on incoming messages</div>
+                                        </div>
+                                        <div style={{
+                                            width: 18,
+                                            height: 18,
+                                            borderRadius: "50%",
+                                            border: soundEnabled ? `2px solid ${t.accent}` : "2px solid rgba(140,140,140,0.4)",
+                                            display: "flex",
+                                            alignItems: "center",
+                                            justifyContent: "center",
+                                            flexShrink: 0
+                                        }}>
+                                            {soundEnabled && <div style={{ width: 8, height: 8, borderRadius: "50%", background: t.accent }} />}
+                                        </div>
                                     </div>
-                                    <span style={{ fontSize: 11, fontWeight: 800, color: soundEnabled ? "#34A853" : t.textMuted }}>
-                                        {soundEnabled ? "Enabled ✓" : "Muted ✕"}
-                                    </span>
+
+                                    {/* Audio Muted Radio */}
+                                    <div
+                                        onClick={() => !soundEnabled || toggleSoundEnabled()}
+                                        style={{
+                                            padding: "14px 16px",
+                                            display: "flex",
+                                            alignItems: "center",
+                                            justifyContent: "space-between",
+                                            cursor: "pointer",
+                                            background: !soundEnabled ? "rgba(56, 189, 248, 0.05)" : "transparent"
+                                        }}
+                                    >
+                                        <div>
+                                            <div style={{ fontSize: 13.5, fontWeight: 700, color: t.text }}>Muted (Silent)</div>
+                                            <div style={{ fontSize: 11, color: t.textMuted, marginTop: 2 }}>Suppress all message audio playback</div>
+                                        </div>
+                                        <div style={{
+                                            width: 18,
+                                            height: 18,
+                                            borderRadius: "50%",
+                                            border: !soundEnabled ? `2px solid ${t.accent}` : "2px solid rgba(140,140,140,0.4)",
+                                            display: "flex",
+                                            alignItems: "center",
+                                            justifyContent: "center",
+                                            flexShrink: 0
+                                        }}>
+                                            {!soundEnabled && <div style={{ width: 8, height: 8, borderRadius: "50%", background: t.accent }} />}
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
 
-                            {/* Privacy */}
+                            {/* Section 3: Privacy & System Limits */}
                             <div>
-                                <div className="ht-section-label" style={{ color: t.textMuted, paddingLeft: 0, marginBottom: 8 }}>Privacy & Security</div>
-                                <div style={{ background: "rgba(120, 120, 120, 0.05)", border: t.border, borderRadius: 12, padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-                                    <div>
-                                        <div style={{ fontSize: 13, fontWeight: 700, color: t.text }}>Read Receipts</div>
-                                        <div style={{ fontSize: 10.5, color: t.textMuted }}>Show when messages are read</div>
+                                <div style={{ fontSize: 11, fontWeight: 700, color: t.textMuted, letterSpacing: "0.8px", textTransform: "uppercase", marginBottom: 8 }}>
+                                    Privacy & Storage
+                                </div>
+                                <div style={{ background: t.cardBg, borderRadius: 12, border: t.border, overflow: "hidden" }}>
+                                    <div style={{ padding: "14px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: t.border }}>
+                                        <div>
+                                            <div style={{ fontSize: 13.5, fontWeight: 700, color: t.text }}>Read Receipts</div>
+                                            <div style={{ fontSize: 11, color: t.textMuted, marginTop: 2 }}>Inform senders when their messages have been read</div>
+                                        </div>
+                                        <div style={{ fontSize: 11, fontWeight: 700, color: "#10b981", background: "rgba(16, 185, 129, 0.1)", padding: "3px 8px", borderRadius: 4 }}>
+                                            Enabled
+                                        </div>
                                     </div>
-                                    <span style={{ fontSize: 11, fontWeight: 700, color: t.accent }}>Enabled</span>
+
+                                    <div style={{ padding: "14px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                                        <div>
+                                            <div style={{ fontSize: 13.5, fontWeight: 700, color: t.text }}>Maximum File Size</div>
+                                            <div style={{ fontSize: 11, color: t.textMuted, marginTop: 2 }}>Maximum allowed media attachment payload</div>
+                                        </div>
+                                        <div style={{ fontSize: 11, fontWeight: 700, color: t.accent, background: "rgba(56, 189, 248, 0.1)", padding: "3px 8px", borderRadius: 4 }}>
+                                            50 MB
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
 
-                            {/* Storage & Limits */}
+                            {/* Section 4: Account Actions */}
                             <div>
-                                <div className="ht-section-label" style={{ color: t.textMuted, paddingLeft: 0, marginBottom: 8 }}>Storage & Attachments</div>
-                                <div style={{ background: "rgba(120, 120, 120, 0.05)", border: t.border, borderRadius: 12, padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                                    <div>
-                                        <div style={{ fontSize: 13, fontWeight: 700, color: t.text }}>Max Attachment Payload</div>
-                                        <div style={{ fontSize: 10.5, color: t.textMuted }}>High-capacity Rocket file limit</div>
-                                    </div>
-                                    <span style={{ fontSize: 11, fontWeight: 800, color: "#38bdf8", background: "rgba(56,189,248,0.15)", padding: "4px 8px", borderRadius: 8 }}>50 MB</span>
+                                <div style={{ fontSize: 11, fontWeight: 700, color: t.textMuted, letterSpacing: "0.8px", textTransform: "uppercase", marginBottom: 8 }}>
+                                    Session
                                 </div>
-                            </div>
-
-                            {/* Account Session */}
-                            <div style={{ marginTop: 10 }}>
-                                <button
-                                    type="button"
-                                    onClick={onLogout}
-                                    style={{
-                                        width: "100%",
-                                        padding: "12px",
-                                        borderRadius: 12,
-                                        border: "1px solid rgba(239, 68, 68, 0.4)",
-                                        background: "rgba(239, 68, 68, 0.1)",
-                                        color: "#ef4444",
-                                        fontWeight: 800,
-                                        cursor: "pointer"
-                                    }}
-                                >
-                                    Log Out of FlowChat
-                                </button>
+                                <div style={{ background: t.cardBg, borderRadius: 12, border: t.border, overflow: "hidden" }}>
+                                    <div
+                                        onClick={onLogout}
+                                        style={{
+                                            padding: "14px 16px",
+                                            display: "flex",
+                                            alignItems: "center",
+                                            justifyContent: "space-between",
+                                            cursor: "pointer"
+                                        }}
+                                    >
+                                        <div>
+                                            <div style={{ fontSize: 13.5, fontWeight: 700, color: "#ef4444" }}>Log Out</div>
+                                            <div style={{ fontSize: 11, color: t.textMuted, marginTop: 2 }}>Terminate active session on this device</div>
+                                        </div>
+                                        <svg width="18" height="18" fill="none" stroke="#ef4444" strokeWidth="2" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                                        </svg>
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
-                        <div style={{ marginTop: "auto", borderTop: t.border, paddingTop: 16, fontSize: 11, color: t.textMuted, textAlign: "center" }}>
-                            FlowChat v2.5.0 • End-to-End Encrypted
+                        <div style={{ marginTop: "auto", paddingTop: 28, fontSize: 11, color: t.textMuted, textAlign: "center", opacity: 0.6 }}>
+                            FlowChat Client v2.5.0
                         </div>
                     </div>
                 )}
