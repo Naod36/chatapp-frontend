@@ -213,23 +213,29 @@ export default function ChatDashboard({ user, onLogout }) {
         const timer = setTimeout(async () => {
             try {
                 const res = await userService.searchUsers(groupSearchQuery);
-                const filtered = res.filter(u => u.id !== user.userId && !selectedGroupMembers.some(sm => sm.id === u.id));
+                const currentUserId = user?.userId || user?.user_id;
+                const normalized = res.map(u => ({
+                    ...u,
+                    id: u.id || u.user_id
+                }));
+                const filtered = normalized.filter(u => u.id !== currentUserId && !selectedGroupMembers.some(sm => (sm.id || sm.user_id) === u.id));
                 setGroupSearchResults(filtered);
             } catch (err) {
                 console.error("Failed to search users for group:", err);
             }
         }, 300);
         return () => clearTimeout(timer);
-    }, [groupSearchQuery, selectedGroupMembers, user.userId]);
+    }, [groupSearchQuery, selectedGroupMembers, user]);
 
     const handleSelectGroupMember = (u) => {
-        setSelectedGroupMembers(prev => [...prev, u]);
+        const normalizedUser = { ...u, id: u.id || u.user_id };
+        setSelectedGroupMembers(prev => [...prev, normalizedUser]);
         setGroupSearchQuery("");
         setGroupSearchResults([]);
     };
 
     const handleRemoveGroupMember = (userId) => {
-        setSelectedGroupMembers(prev => prev.filter(u => u.id !== userId));
+        setSelectedGroupMembers(prev => prev.filter(u => (u.id || u.user_id) !== userId));
     };
 
     const handleCreateGroupSubmit = async (e) => {
@@ -244,7 +250,7 @@ export default function ChatDashboard({ user, onLogout }) {
         }
         try {
             setIsCreatingGroup(true);
-            const participantIds = selectedGroupMembers.map(u => u.id);
+            const participantIds = selectedGroupMembers.map(u => u.id || u.user_id);
             const res = await conversationService.createGroup(groupTitle.trim(), participantIds);
             setIsCreateGroupOpen(false);
             setGroupTitle("");
@@ -3210,7 +3216,7 @@ export default function ChatDashboard({ user, onLogout }) {
                                 {selectedGroupMembers.length > 0 && (
                                     <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
                                         {selectedGroupMembers.map(m => (
-                                            <span key={m.id} style={{
+                                            <span key={m.id || m.user_id} style={{
                                                 background: "rgba(56, 189, 248, 0.15)",
                                                 color: "#38bdf8",
                                                 border: "1px solid rgba(56, 189, 248, 0.3)",
@@ -3225,7 +3231,7 @@ export default function ChatDashboard({ user, onLogout }) {
                                                 {m.display_name || m.username}
                                                 <button
                                                     type="button"
-                                                    onClick={() => handleRemoveGroupMember(m.id)}
+                                                    onClick={() => handleRemoveGroupMember(m.id || m.user_id)}
                                                     style={{ background: "none", border: "none", color: "#38bdf8", cursor: "pointer", padding: 0, fontSize: 12, fontWeight: 800 }}
                                                 >
                                                     ✕
@@ -3264,7 +3270,7 @@ export default function ChatDashboard({ user, onLogout }) {
                                     }}>
                                         {groupSearchResults.map(u => (
                                             <div
-                                                key={u.id}
+                                                key={u.id || u.user_id}
                                                 onClick={() => handleSelectGroupMember(u)}
                                                 style={{
                                                     padding: "10px 14px",
