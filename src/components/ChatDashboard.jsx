@@ -142,6 +142,7 @@ export default function ChatDashboard({ user, onLogout }) {
 
     // UI redesign states
     const [activeRailTab, setActiveRailTab] = useState("chats"); // "chats" | "profile" | "settings"
+    const [convoTab, setConvoTab] = useState("all"); // "all" | "groups"
     const [showInspector, setShowInspector] = useState(true);
     const [myProfile, setMyProfile] = useState({ display_name: user?.username || "", bio: "", avatar_url: "" });
     const [selectedFile, setSelectedFile] = useState(null);
@@ -1451,6 +1452,59 @@ export default function ChatDashboard({ user, onLogout }) {
                                     />
                                 </div>
                             </div>
+
+                            {/* Category Filter Tabs (All Messages / Groups) */}
+                            <div style={{ display: "flex", gap: 6, padding: "8px 16px", borderBottom: t.border }}>
+                                <button
+                                    type="button"
+                                    onClick={() => setConvoTab("all")}
+                                    style={{
+                                        background: convoTab === "all" ? "rgba(56, 189, 248, 0.15)" : "transparent",
+                                        border: "none",
+                                        borderRadius: "10px",
+                                        padding: "6px 14px",
+                                        fontSize: "12px",
+                                        fontWeight: 800,
+                                        color: convoTab === "all" ? t.accent : t.textMuted,
+                                        cursor: "pointer",
+                                        transition: "all 0.2s ease"
+                                    }}
+                                >
+                                    All Messages
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setConvoTab("groups")}
+                                    style={{
+                                        background: convoTab === "groups" ? "rgba(56, 189, 248, 0.15)" : "transparent",
+                                        border: "none",
+                                        borderRadius: "10px",
+                                        padding: "6px 14px",
+                                        fontSize: "12px",
+                                        fontWeight: 800,
+                                        color: convoTab === "groups" ? t.accent : t.textMuted,
+                                        cursor: "pointer",
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 6,
+                                        transition: "all 0.2s ease"
+                                    }}
+                                >
+                                    <span>Groups</span>
+                                    {conversations.filter(c => c.type === "group").length > 0 && (
+                                        <span style={{
+                                            background: convoTab === "groups" ? t.accent : "rgba(120, 120, 120, 0.2)",
+                                            color: convoTab === "groups" ? "#ffffff" : t.textMuted,
+                                            borderRadius: 10,
+                                            padding: "1px 6px",
+                                            fontSize: 10,
+                                            fontWeight: 800
+                                        }}>
+                                            {conversations.filter(c => c.type === "group").length}
+                                        </span>
+                                    )}
+                                </button>
+                            </div>
                         </div>
 
                         <div className="ht-convo-list">
@@ -1487,11 +1541,10 @@ export default function ChatDashboard({ user, onLogout }) {
                                         <div style={{ textAlign: "center", padding: 20, color: t.textMuted, fontSize: 12 }}>No matching nodes.</div>
                                     )}
                                 </>
-                            ) : (
+                            ) : convoTab === "groups" ? (
                                 <>
-                                    {/* Saved cloud message row at top */}
-                                    <div className="ht-section-label" style={{ color: t.accent }}>Pinned Message</div>
-                                    {conversations.filter(c => !c.other_participant).map(c => {
+                                    <div className="ht-section-label" style={{ color: t.textMuted }}>Group Chats</div>
+                                    {conversations.filter(c => c.type === "group").map(c => {
                                         const isActive = activeConv && activeConv.id === c.id;
                                         return (
                                             <div
@@ -1509,7 +1562,65 @@ export default function ChatDashboard({ user, onLogout }) {
                                                     border: isActive ? `1px solid ${t.accent}` : "1px solid transparent"
                                                 }}
                                             >
-                                                <div style={{ width: 40, height: 40, borderRadius: "50%", background: "linear-gradient(135deg, #de4977, #c93b66)", display: "flex", alignItems: "center", justifycontent: "center", color: "white", flexShrink: 0, position: "relative" }}>
+                                                <div style={{ width: 40, height: 40, borderRadius: "50%", background: "linear-gradient(135deg, #6366f1, #4f46e5)", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontWeight: "800", flexShrink: 0, position: "relative" }}>
+                                                    {c.avatar_url ? (
+                                                        <img src={c.avatar_url} alt="" style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} />
+                                                    ) : (
+                                                        c.display_name?.[0]?.toUpperCase() || "G"
+                                                    )}
+                                                </div>
+                                                <div style={{ flex: 1, minWidth: 0 }}>
+                                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                                        <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                                                            <span style={{ fontSize: 13, fontWeight: "755", color: t.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.display_name}</span>
+                                                            <span style={{ background: "rgba(99, 102, 241, 0.2)", color: "#818cf8", fontSize: 9.5, padding: "1px 5px", borderRadius: 4, fontWeight: 700, flexShrink: 0 }}>GROUP</span>
+                                                        </div>
+                                                        <span style={{ fontSize: 9.5, color: c.unread_count > 0 ? t.accent : t.textMuted, fontWeight: c.unread_count > 0 ? "700" : "normal" }}>{formatTime(c.last_message_time)}</span>
+                                                    </div>
+                                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 2 }}>
+                                                        <p style={{ margin: 0, fontSize: 11.5, color: c.unread_count > 0 ? t.text : t.textMuted, fontWeight: c.unread_count > 0 ? "600" : "normal", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "flex", alignItems: "center", gap: 4, flex: 1 }}>
+                                                            {c.last_message && c.last_message.sender_id === user.userId && renderMessageStatus(c.last_message.status, true)}
+                                                            <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+                                                                {c.last_message_content || `${c.participants?.length || 0} members`}
+                                                            </span>
+                                                        </p>
+                                                        {c.unread_count > 0 && (
+                                                            <div style={{ background: t.accent, color: "#ffffff", borderRadius: 10, padding: "2px 7px", fontSize: 10.5, fontWeight: "700", marginLeft: 6, flexShrink: 0 }}>
+                                                                {c.unread_count}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                    {conversations.filter(c => c.type === "group").length === 0 && (
+                                        <div style={{ textAlign: "center", padding: "30px 10px", color: t.textMuted, fontSize: 12 }}>No group chats created yet. Click "+ Group" to start one!</div>
+                                    )}
+                                </>
+                            ) : (
+                                <>
+                                    {/* Saved cloud message row at top */}
+                                    <div className="ht-section-label" style={{ color: t.accent }}>Pinned Message</div>
+                                    {conversations.filter(c => c.id === "virtual-saved-messages" || (c.type === "direct" && !c.other_participant)).map(c => {
+                                        const isActive = activeConv && activeConv.id === c.id;
+                                        return (
+                                            <div
+                                                key={c.id}
+                                                onClick={() => handleSelectConversation(c)}
+                                                style={{
+                                                    display: "flex",
+                                                    alignItems: "center",
+                                                    gap: 12,
+                                                    padding: "12px 14px",
+                                                    borderRadius: 14,
+                                                    cursor: "pointer",
+                                                    background: isActive ? "rgba(120, 120, 120, 0.09)" : "transparent",
+                                                    marginBottom: 4,
+                                                    border: isActive ? `1px solid ${t.accent}` : "1px solid transparent"
+                                                }}
+                                            >
+                                                <div style={{ width: 40, height: 40, borderRadius: "50%", background: "linear-gradient(135deg, #de4977, #c93b66)", display: "flex", alignItems: "center", justifyContent: "center", color: "white", flexShrink: 0, position: "relative" }}>
                                                     <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24" style={{ margin: "auto" }}>
                                                         <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
                                                     </svg>
@@ -1526,11 +1637,12 @@ export default function ChatDashboard({ user, onLogout }) {
                                         );
                                     })}
 
-                                    {/* All remaining active Direct Messages */}
+                                    {/* All remaining active Direct Messages & Group Messages */}
                                     <div className="ht-section-label" style={{ color: t.textMuted }}>All Message</div>
-                                    {conversations.filter(c => c.other_participant).map(c => {
+                                    {conversations.filter(c => c.id !== "virtual-saved-messages" && !(c.type === "direct" && !c.other_participant)).map(c => {
                                         const isActive = activeConv && activeConv.id === c.id;
-                                        const isOnline = c.other_participant?.status === "online";
+                                        const isGroup = c.type === "group";
+                                        const isOnline = !isGroup && c.other_participant?.status === "online";
                                         return (
                                             <div
                                                 key={c.id}
@@ -1547,11 +1659,11 @@ export default function ChatDashboard({ user, onLogout }) {
                                                     border: isActive ? `1px solid rgba(120, 120, 120, 0.15)` : "1px solid transparent"
                                                 }}
                                             >
-                                                <div style={{ width: 40, height: 40, borderRadius: "50%", background: "#4f46e5", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontWeight: "800", flexShrink: 0, position: "relative" }}>
+                                                <div style={{ width: 40, height: 40, borderRadius: "50%", background: isGroup ? "linear-gradient(135deg, #6366f1, #4f46e5)" : "#4f46e5", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontWeight: "800", flexShrink: 0, position: "relative" }}>
                                                     {c.avatar_url ? (
                                                         <img src={c.avatar_url} alt="" style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} />
                                                     ) : (
-                                                        c.display_name?.[0]?.toUpperCase() || "@"
+                                                        c.display_name?.[0]?.toUpperCase() || (isGroup ? "G" : "@")
                                                     )}
                                                     {isOnline && (
                                                         <div style={{ position: "absolute", bottom: 0, right: 0, width: 10, height: 10, borderRadius: "50%", background: "#34A853", border: `2px solid ${t.sidebarBg}` }} />
@@ -1559,14 +1671,17 @@ export default function ChatDashboard({ user, onLogout }) {
                                                 </div>
                                                 <div style={{ flex: 1, minWidth: 0 }}>
                                                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                                                        <span style={{ fontSize: 13, fontWeight: "755", color: t.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.display_name}</span>
+                                                        <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                                                            <span style={{ fontSize: 13, fontWeight: "755", color: t.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.display_name}</span>
+                                                            {isGroup && <span style={{ background: "rgba(99, 102, 241, 0.2)", color: "#818cf8", fontSize: 9.5, padding: "1px 5px", borderRadius: 4, fontWeight: 700, flexShrink: 0 }}>GROUP</span>}
+                                                        </div>
                                                         <span style={{ fontSize: 9.5, color: c.unread_count > 0 ? t.accent : t.textMuted, fontWeight: c.unread_count > 0 ? "700" : "normal" }}>{formatTime(c.last_message_time)}</span>
                                                     </div>
                                                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 2 }}>
                                                         <p style={{ margin: 0, fontSize: 11.5, color: c.unread_count > 0 ? t.text : t.textMuted, fontWeight: c.unread_count > 0 ? "600" : "normal", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "flex", alignItems: "center", gap: 4, flex: 1 }}>
                                                             {c.last_message && c.last_message.sender_id === user.userId && renderMessageStatus(c.last_message.status, true)}
                                                             <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
-                                                                {c.last_message_content || "No messages yet"}
+                                                                {c.last_message_content || (isGroup ? `${c.participants?.length || 0} members` : "No messages yet")}
                                                             </span>
                                                         </p>
                                                         {c.unread_count > 0 && (
@@ -1579,7 +1694,7 @@ export default function ChatDashboard({ user, onLogout }) {
                                             </div>
                                         );
                                     })}
-                                    {conversations.filter(c => c.other_participant).length === 0 && (
+                                    {conversations.filter(c => c.id !== "virtual-saved-messages" && !(c.type === "direct" && !c.other_participant)).length === 0 && (
                                         <div style={{ textAlign: "center", padding: "30px 10px", color: t.textMuted, fontSize: 11 }}>No message nodes in current cluster.</div>
                                     )}
                                 </>
