@@ -117,6 +117,19 @@ export default function ChatDashboard({ user, onLogout }) {
     const [searchResults, setSearchResults] = useState([]);
     const [isSearching, setIsSearching] = useState(false);
     const [wsConnected, setWsConnected] = useState(false);
+    const [syncState, setSyncState] = useState("connecting"); // "connecting" | "updating" | "ready"
+
+    useEffect(() => {
+        if (!wsConnected) {
+            setSyncState("connecting");
+        } else {
+            setSyncState("updating");
+            const timer = setTimeout(() => {
+                setSyncState("ready");
+            }, 1200);
+            return () => clearTimeout(timer);
+        }
+    }, [wsConnected]);
     const [typingUsers, setTypingUsers] = useState({}); // { [convId]: { [userId]: boolean } }
     const [errorToast, setErrorToast] = useState(null);
 
@@ -153,6 +166,174 @@ export default function ChatDashboard({ user, onLogout }) {
     const avatarInputRef = useRef(null);
     const emojiPickerRef = useRef(null);
 
+    // Advanced chat feature states: Sound, Pin, Search, Reactions
+    const [soundEnabled, setSoundEnabled] = useState(() => {
+        const saved = localStorage.getItem("chat_sound_enabled");
+        return saved !== null ? saved === "true" : true;
+    });
+    const [pinnedMessageIdMap, setPinnedMessageIdMap] = useState({});
+    const [isInChatSearchOpen, setIsInChatSearchOpen] = useState(false);
+    const [inChatSearchQuery, setInChatSearchQuery] = useState("");
+    const [inChatSearchMatchIndex, setInChatSearchMatchIndex] = useState(0);
+    const [hoveredMsgId, setHoveredMsgId] = useState(null);
+    const [mutedConvIds, setMutedConvIds] = useState(() => {
+        try {
+            const saved = localStorage.getItem("muted_conversations");
+            return saved ? JSON.parse(saved) : {};
+        } catch (e) {
+            return {};
+        }
+    });
+    const [viewingParticipantProfile, setViewingParticipantProfile] = useState(null);
+
+    // Group Creation Modal states
+    const [isCreateGroupOpen, setIsCreateGroupOpen] = useState(false);
+    const [groupTitle, setGroupTitle] = useState("");
+    const [groupSearchQuery, setGroupSearchQuery] = useState("");
+    const [groupSearchResults, setGroupSearchResults] = useState([]);
+    const [selectedGroupMembers, setSelectedGroupMembers] = useState([]);
+    const [isCreatingGroup, setIsCreatingGroup] = useState(false);
+
+    const getSenderNameColor = (senderId) => {
+        const colors = ["#38bdf8", "#818cf8", "#f43f5e", "#fbbf24", "#34d399", "#a78bfa", "#f472b6"];
+        if (!senderId) return colors[0];
+        let hash = 0;
+        for (let i = 0; i < senderId.length; i++) {
+            hash = senderId.charCodeAt(i) + ((hash << 5) - hash);
+        }
+        return colors[Math.abs(hash) % colors.length];
+    };
+
+    // User search effect for group members
+    useEffect(() => {
+        if (!groupSearchQuery.trim()) {
+            setGroupSearchResults([]);
+            return;
+        }
+        const timer = setTimeout(async () => {
+            try {
+                const res = await userService.searchUsers(groupSearchQuery);
+                const filtered = res.filter(u => u.id !== user.userId && !selectedGroupMembers.some(sm => sm.id === u.id));
+                setGroupSearchResults(filtered);
+            } catch (err) {
+                console.error("Failed to search users for group:", err);
+            }
+        }, 300);
+        return () => clearTimeout(timer);
+    }, [groupSearchQuery, selectedGroupMembers, user.userId]);
+
+    const handleSelectGroupMember = (u) => {
+        setSelectedGroupMembers(prev => [...prev, u]);
+        setGroupSearchQuery("");
+        setGroupSearchResults([]);
+    };
+
+    const handleRemoveGroupMember = (userId) => {
+        setSelectedGroupMembers(prev => prev.filter(u => u.id !== userId));
+    };
+
+    const handleCreateGroupSubmit = async (e) => {
+        e.preventDefault();
+        if (!groupTitle.trim()) {
+            showError("Please enter a group title");
+            return;
+        }
+        if (selectedGroupMembers.length === 0) {
+            showError("Please select at least 1 other participant");
+            return;
+        }
+        try {
+            setIsCreatingGroup(true);
+            const participantIds = selectedGroupMembers.map(u => u.id);
+            const res = await conversationService.createGroup(groupTitle.trim(), participantIds);
+            setIsCreateGroupOpen(false);
+            setGroupTitle("");
+            setSelectedGroupMembers([]);
+            await loadConversations();
+            if (res.conversation_id) {
+                const newGroupConv = {
+                    id: res.conversation_id,
+                    type: "group",
+                    title: groupTitle.trim(),
+                    display_name: groupTitle.trim(),
+                    participants: selectedGroupMembers,
+                    avatar_url: null,
+                    last_message_content: "Group created",
+                    last_message_time: new Date().toISOString()
+                };
+                setActiveConv(newGroupConv);
+            }
+        } catch (err) {
+            showError(err.message || "Failed to create group");
+        } finally {
+            setIsCreatingGroup(false);
+        }
+    };
+
+    const toggleMuteConversation = (convId) => {
+        if (!convId) return;
+        setMutedConvIds(prev => {
+            const next = { ...prev, [convId]: !prev[convId] };
+            localStorage.setItem("muted_conversations", JSON.stringify(next));
+            return next;
+        });
+    };
+
+    const safeSendWs = (payload) => {
+        try {
+            if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+                socketRef.current.send(JSON.stringify(payload));
+                return true;
+            }
+        } catch (e) {
+            console.warn("WebSocket send error:", e);
+        }
+        return false;
+    };
+
+    const playNotificationSound = (targetConvId) => {
+        if (!soundEnabled) return;
+        if (targetConvId && mutedConvIds[targetConvId]) return;
+        try {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (!AudioCtx) return;
+            const ctx = new AudioCtx();
+            const osc1 = ctx.createOscillator();
+            const osc2 = ctx.createOscillator();
+            const gain = ctx.createGain();
+
+            osc1.type = "sine";
+            osc2.type = "sine";
+            osc1.frequency.setValueAtTime(587.33, ctx.currentTime);
+            osc2.frequency.setValueAtTime(880.00, ctx.currentTime + 0.08);
+
+            gain.gain.setValueAtTime(0.12, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+
+            osc1.connect(gain);
+            osc2.connect(gain);
+            gain.connect(ctx.destination);
+
+            osc1.start(ctx.currentTime);
+            osc1.stop(ctx.currentTime + 0.1);
+            osc2.start(ctx.currentTime + 0.08);
+            osc2.stop(ctx.currentTime + 0.3);
+
+            // Auto-close AudioContext to prevent Firefox Web Audio pool exhaustion
+            setTimeout(() => {
+                ctx.close().catch(() => {});
+            }, 350);
+        } catch (e) {}
+    };
+
+    const toggleSoundEnabled = () => {
+        setSoundEnabled(prev => {
+            const next = !prev;
+            localStorage.setItem("chat_sound_enabled", String(next));
+            return next;
+        });
+    };
+
     // Scroll-to-bottom and unread pill state
     const [showScrollBottomBtn, setShowScrollBottomBtn] = useState(false);
     const [newMessagesBelowCount, setNewMessagesBelowCount] = useState(0);
@@ -162,10 +343,20 @@ export default function ChatDashboard({ user, onLogout }) {
     const messageEndRef = useRef(null);
     const typingTimeoutRef = useRef(null);
     const activeConvRef = useRef(activeConv);
+    const inputTextareaRef = useRef(null);
 
     useEffect(() => {
         activeConvRef.current = activeConv;
     }, [activeConv]);
+
+    // Auto-expand input textarea height based on message line count
+    useEffect(() => {
+        if (inputTextareaRef.current) {
+            inputTextareaRef.current.style.height = "auto";
+            const newHeight = Math.min(inputTextareaRef.current.scrollHeight, 180);
+            inputTextareaRef.current.style.height = `${newHeight}px`;
+        }
+    }, [messageText]);
 
     // Close emoji picker on outside click
     useEffect(() => {
@@ -218,12 +409,16 @@ export default function ChatDashboard({ user, onLogout }) {
         try {
             const rawList = await conversationService.listConversations();
             const normalized = rawList.map(c => {
+                const isGroup = c.type === "group";
                 const other = c.other_participant;
                 return {
                     id: c.conversation_id,
                     type: c.type,
-                    display_name: other ? (other.display_name || other.username) : "Saved Messages",
-                    avatar_url: other ? other.avatar_url : null,
+                    title: c.title,
+                    creator_id: c.creator_id,
+                    participants: c.participants || [],
+                    display_name: isGroup ? (c.title || "Group Chat") : (other ? (other.display_name || other.username) : "Saved Messages"),
+                    avatar_url: isGroup ? c.avatar_url : (other ? other.avatar_url : null),
                     last_message_content: c.last_message?.content || "",
                     last_message_time: c.last_message?.created_at || null,
                     other_participant: other,
@@ -232,8 +427,8 @@ export default function ChatDashboard({ user, onLogout }) {
                 };
             });
 
-            let selfConv = normalized.find(c => !c.other_participant);
-            const others = normalized.filter(c => c.other_participant);
+            let selfConv = normalized.find(c => c.type === "direct" && !c.other_participant);
+            const others = normalized.filter(c => c.type === "group" || c.other_participant);
 
             if (!selfConv) {
                 selfConv = {
@@ -252,6 +447,14 @@ export default function ChatDashboard({ user, onLogout }) {
                 const bTime = b.last_message_time ? new Date(b.last_message_time).getTime() : 0;
                 return bTime - aTime;
             });
+
+            const map = {};
+            rawList.forEach(c => {
+                if (c.pinned_message_id) {
+                    map[c.conversation_id] = c.pinned_message_id;
+                }
+            });
+            setPinnedMessageIdMap(map);
 
             setConversations([selfConv, ...sortedOthers].filter(Boolean));
         } catch (err) {
@@ -285,6 +488,10 @@ export default function ChatDashboard({ user, onLogout }) {
                 console.log("WebSocket event:", data);
                 if (data.event === "new_message") {
                     const isCurrentActive = activeConvRef.current && activeConvRef.current.id === data.conversation_id;
+
+                    if (data.sender_id !== user.userId && soundEnabled) {
+                        playNotificationSound();
+                    }
 
                     // Update conversation list item in real-time & move to top
                     setConversations(prev => {
@@ -436,6 +643,32 @@ export default function ChatDashboard({ user, onLogout }) {
                     setMessages(prev => prev.map(m => m.id === data.message_id ? { ...m, content: data.content, is_edited: true } : m));
                 } else if (data.event === "message_deleted") {
                     setMessages(prev => prev.filter(m => m.id !== data.message_id));
+                } else if (data.event === "message_reacted") {
+                    setMessages(prev => prev.map(m => {
+                        const mId = m.id || m.message_id;
+                        if (mId === data.message_id) {
+                            const existingReactions = { ...(m.reactions || {}) };
+                            const userList = existingReactions[data.emoji] ? [...existingReactions[data.emoji]] : [];
+                            const userIndex = userList.indexOf(data.user_id);
+                            if (userIndex > -1) {
+                                userList.splice(userIndex, 1);
+                            } else {
+                                userList.push(data.user_id);
+                            }
+                            if (userList.length === 0) {
+                                delete existingReactions[data.emoji];
+                            } else {
+                                existingReactions[data.emoji] = userList;
+                            }
+                            return { ...m, reactions: existingReactions };
+                        }
+                        return m;
+                    }));
+                } else if (data.event === "message_pinned") {
+                    setPinnedMessageIdMap(prev => ({
+                        ...prev,
+                        [data.conversation_id]: data.message_id
+                    }));
                 } else if (data.event === "user_status") {
                     setConversations(prev => {
                         return prev.map(c => {
@@ -860,6 +1093,136 @@ export default function ChatDashboard({ user, onLogout }) {
         handleCloseContextMenu();
     };
 
+    const handleCopyImage = async (msg) => {
+        if (!msg.media_url) return;
+        try {
+            const imgUrl = getAssetUrl(msg.media_url);
+            const res = await fetch(imgUrl);
+            const blob = await res.blob();
+            if (navigator.clipboard && window.ClipboardItem) {
+                await navigator.clipboard.write([
+                    new ClipboardItem({ [blob.type]: blob })
+                ]);
+            } else {
+                await navigator.clipboard.writeText(imgUrl);
+            }
+        } catch (err) {
+            console.error("Failed to copy image:", err);
+            try {
+                await navigator.clipboard.writeText(getAssetUrl(msg.media_url));
+            } catch (e) {}
+        }
+        handleCloseContextMenu();
+    };
+
+    const handlePaste = (e) => {
+        const clipboardData = e.clipboardData || window.clipboardData;
+        if (!clipboardData || !clipboardData.items) return;
+
+        const items = Array.from(clipboardData.items);
+        for (const item of items) {
+            if (item.kind === "file") {
+                const file = item.getAsFile();
+                if (file) {
+                    e.preventDefault();
+                    setSelectedFile(file);
+                    if (file.type.startsWith("image/")) {
+                        const reader = new FileReader();
+                        reader.onload = () => setFilePreview(reader.result);
+                        reader.readAsDataURL(file);
+                    } else {
+                        setFilePreview(null);
+                    }
+                    break;
+                }
+            }
+        }
+    };
+
+    const REACTION_EMOJIS = ["❤️", "👍", "😂", "😮", "😢", "🔥"];
+
+    const handleToggleReaction = (msg, emoji) => {
+        if (!activeConv) return;
+        const msgId = String(msg.id || msg.message_id || "");
+
+        safeSendWs({
+            action: "react_message",
+            conversation_id: String(activeConv.id),
+            message_id: msgId,
+            emoji: String(emoji)
+        });
+
+        setMessages(prev => prev.map(m => {
+            if ((m.id || m.message_id) === msgId) {
+                const existingReactions = { ...(m.reactions || {}) };
+                const userList = existingReactions[emoji] ? [...existingReactions[emoji]] : [];
+                const userIndex = userList.indexOf(user.userId);
+
+                if (userIndex > -1) {
+                    userList.splice(userIndex, 1);
+                } else {
+                    userList.push(user.userId);
+                }
+
+                if (userList.length === 0) {
+                    delete existingReactions[emoji];
+                } else {
+                    existingReactions[emoji] = userList;
+                }
+                return { ...m, reactions: existingReactions };
+            }
+            return m;
+        }));
+
+        handleCloseContextMenu();
+    };
+
+    const handleTogglePin = (msg) => {
+        if (!activeConv) return;
+        const msgId = String(msg.id || msg.message_id || "");
+        const currentPinnedId = pinnedMessageIdMap[activeConv.id];
+        const isCurrentlyPinned = currentPinnedId === msgId;
+
+        const payload = {
+            action: "pin_message",
+            conversation_id: String(activeConv.id)
+        };
+        if (!isCurrentlyPinned) {
+            payload.message_id = msgId;
+        }
+
+        safeSendWs(payload);
+
+        setPinnedMessageIdMap(prev => ({
+            ...prev,
+            [activeConv.id]: isCurrentlyPinned ? null : msgId
+        }));
+        handleCloseContextMenu();
+    };
+
+    const searchMatchingMessages = messages.filter(m => {
+        if (!inChatSearchQuery.trim()) return false;
+        return m.content?.toLowerCase().includes(inChatSearchQuery.toLowerCase());
+    });
+
+    const handleNextSearchMatch = () => {
+        if (searchMatchingMessages.length === 0) return;
+        const nextIdx = (inChatSearchMatchIndex + 1) % searchMatchingMessages.length;
+        setInChatSearchMatchIndex(nextIdx);
+        const targetMsg = searchMatchingMessages[nextIdx];
+        const el = document.getElementById(`msg-${targetMsg.id || targetMsg.message_id}`);
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    };
+
+    const handlePrevSearchMatch = () => {
+        if (searchMatchingMessages.length === 0) return;
+        const prevIdx = (inChatSearchMatchIndex - 1 + searchMatchingMessages.length) % searchMatchingMessages.length;
+        setInChatSearchMatchIndex(prevIdx);
+        const targetMsg = searchMatchingMessages[prevIdx];
+        const el = document.getElementById(`msg-${targetMsg.id || targetMsg.message_id}`);
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    };
+
     // Send typing status to WebSocket Node
     const handleKeyPress = () => {
         if (!activeConv || !socketRef.current) return;
@@ -915,7 +1278,7 @@ export default function ChatDashboard({ user, onLogout }) {
     const sharedFiles = messages.filter(m => m.media_url && !sharedImages.includes(m));
 
     return (
-        <div className="ht-app-container" style={{ background: t.chatBg, color: t.text }}>
+        <div className={`ht-app-container ${theme === "dark" ? "ht-dark-theme" : "ht-light-theme"}`} style={{ background: t.chatBg, color: t.text }}>
             {errorToast && (
                 <div style={{
                     position: "fixed",
@@ -1013,12 +1376,59 @@ export default function ChatDashboard({ user, onLogout }) {
                 {activeRailTab === "chats" && (
                     <>
                         <div className="ht-sidebar-header">
-                            <div className="ht-sidebar-title-row">
-                                <h2 style={{ margin: 0, fontSize: 20, fontweight: "800", color: t.text }}>Messages</h2>
-                                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: wsConnected ? "#34A853" : "#EA4335" }} />
-                                    <span style={{ fontSize: 11, opacity: 0.6 }}>{wsConnected ? "Online" : "Offline"}</span>
+                            <div className="ht-sidebar-title-row" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                                    <h2 style={{ margin: 0, fontSize: 20, fontWeight: "800", color: t.text }}>Messages</h2>
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsCreateGroupOpen(true)}
+                                        style={{
+                                            background: "rgba(56, 189, 248, 0.12)",
+                                            border: "1px solid rgba(56, 189, 248, 0.3)",
+                                            color: "#38bdf8",
+                                            borderRadius: "20px",
+                                            padding: "3px 10px",
+                                            fontSize: "11px",
+                                            fontWeight: "800",
+                                            cursor: "pointer",
+                                            display: "flex",
+                                            alignItems: "center",
+                                            gap: "4px",
+                                            transition: "all 0.2s ease"
+                                        }}
+                                        title="Create New Group Chat"
+                                    >
+                                        <span>+ Group</span>
+                                    </button>
                                 </div>
+                                
+                                {syncState === "connecting" && (
+                                    <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, fontWeight: 600, color: "#eab308" }}>
+                                        <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#eab308", display: "inline-block" }} />
+                                        <span>Connecting...</span>
+                                    </div>
+                                )}
+
+                                {syncState === "updating" && (
+                                    <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, fontWeight: 600, color: t.accent }}>
+                                        <span style={{ width: 7, height: 7, borderRadius: "50%", background: t.accent, display: "inline-block" }} />
+                                        <span>Updating...</span>
+                                    </div>
+                                )}
+
+                                {syncState === "ready" && (
+                                    <span style={{
+                                        fontSize: 11,
+                                        fontWeight: 800,
+                                        letterSpacing: "0.5px",
+                                        background: "linear-gradient(135deg, #38bdf8, #818cf8)",
+                                        WebkitBackgroundClip: "text",
+                                        WebkitTextFillColor: "transparent",
+                                        textTransform: "uppercase"
+                                    }}>
+                                        FlowChat
+                                    </span>
+                                )}
                             </div>
                             <div className="ht-sidebar-search-row">
                                 <div className="ht-search-container">
@@ -1416,12 +1826,17 @@ export default function ChatDashboard({ user, onLogout }) {
                             {/* Notifications */}
                             <div>
                                 <div className="ht-section-label" style={{ color: t.textMuted, paddingLeft: 0, marginBottom: 8 }}>Notifications & Sounds</div>
-                                <div style={{ background: "rgba(120, 120, 120, 0.05)", border: t.border, borderRadius: 12, padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                                <div
+                                    onClick={toggleSoundEnabled}
+                                    style={{ background: "rgba(120, 120, 120, 0.05)", border: t.border, borderRadius: 12, padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" }}
+                                >
                                     <div>
                                         <div style={{ fontSize: 13, fontWeight: 700, color: t.text }}>Message Sound Effects</div>
                                         <div style={{ fontSize: 10.5, color: t.textMuted }}>Play chime when receiving messages</div>
                                     </div>
-                                    <span style={{ fontSize: 11, fontWeight: 700, color: t.accent }}>Active</span>
+                                    <span style={{ fontSize: 11, fontWeight: 800, color: soundEnabled ? "#34A853" : t.textMuted }}>
+                                        {soundEnabled ? "Enabled ✓" : "Muted ✕"}
+                                    </span>
                                 </div>
                             </div>
 
@@ -1482,32 +1897,111 @@ export default function ChatDashboard({ user, onLogout }) {
                 {activeConv ? (
                     <>
                         {/* Floating Header Card */}
-                        <div className="ht-chat-header" style={{ background: t.cardBg, border: t.border }}>
-                            <div>
-                                <h3 style={{ margin: 0, fontSize: 16, color: t.text, fontWeight: 800 }}>
-                                    {activeConv.display_name}
-                                </h3>
-                                <span style={{
-                                    fontSize: 11,
-                                    color: getActiveTypingLabel() ? t.accent : (activeConv.other_participant?.status === "online" ? "#34A853" : t.textMuted),
-                                    height: 14,
-                                    display: "block"
-                                }}>
-                                    {getActiveTypingLabel() ||
-                                        (!activeConv.other_participant
-                                            ? "personal cloud storage"
-                                            : (activeConv.other_participant.status === "online"
-                                                ? "online"
-                                                : formatLastSeen(activeConv.other_participant.last_seen)))}
-                                </span>
-                            </div>
+                        <div className="ht-chat-header" style={{ background: t.cardBg, border: t.border, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                            {isInChatSearchOpen ? (
+                                <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, background: "rgba(120, 120, 120, 0.08)", padding: "6px 14px", borderRadius: 20, border: `1px solid ${t.accent}` }}>
+                                    <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" style={{ flexShrink: 0, opacity: 0.7 }}>
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                                    </svg>
+                                    <input
+                                        type="text"
+                                        placeholder="Search in this conversation..."
+                                        value={inChatSearchQuery}
+                                        onChange={(e) => {
+                                            setInChatSearchQuery(e.target.value);
+                                            setInChatSearchMatchIndex(0);
+                                        }}
+                                        autoFocus
+                                        style={{
+                                            flex: 1,
+                                            background: "transparent",
+                                            border: "none",
+                                            outline: "none",
+                                            color: t.text,
+                                            fontSize: 13,
+                                            fontWeight: 500
+                                        }}
+                                    />
+                                    {inChatSearchQuery.trim() && (
+                                        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: t.textMuted }}>
+                                            <span style={{ fontSize: 11, fontWeight: 700 }}>
+                                                {searchMatchingMessages.length > 0
+                                                    ? `${inChatSearchMatchIndex + 1}/${searchMatchingMessages.length}`
+                                                    : "0/0"}
+                                            </span>
+                                            <button
+                                                type="button"
+                                                onClick={handlePrevSearchMatch}
+                                                disabled={searchMatchingMessages.length === 0}
+                                                style={{ background: "none", border: "none", color: t.text, cursor: "pointer", opacity: searchMatchingMessages.length ? 1 : 0.3, padding: "2px 4px" }}
+                                                title="Previous Match"
+                                            >
+                                                ▲
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={handleNextSearchMatch}
+                                                disabled={searchMatchingMessages.length === 0}
+                                                style={{ background: "none", border: "none", color: t.text, cursor: "pointer", opacity: searchMatchingMessages.length ? 1 : 0.3, padding: "2px 4px" }}
+                                                title="Next Match"
+                                            >
+                                                ▼
+                                            </button>
+                                        </div>
+                                    )}
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setIsInChatSearchOpen(false);
+                                            setInChatSearchQuery("");
+                                            setInChatSearchMatchIndex(0);
+                                        }}
+                                        style={{ background: "none", border: "none", color: t.textMuted, cursor: "pointer", padding: "2px 4px", fontSize: 13, fontWeight: 700 }}
+                                        title="Close Search"
+                                    >
+                                        ✕
+                                    </button>
+                                </div>
+                            ) : (
+                                <div>
+                                    <h3 style={{ margin: 0, fontSize: 16, color: t.text, fontWeight: 800 }}>
+                                        {activeConv.display_name}
+                                    </h3>
+                                    <span style={{
+                                        fontSize: 11,
+                                        color: getActiveTypingLabel() ? t.accent : (activeConv.other_participant?.status === "online" ? "#34A853" : t.textMuted),
+                                        height: 14,
+                                        display: "block"
+                                    }}>
+                                        {getActiveTypingLabel() ||
+                                            (activeConv.type === "group"
+                                                ? `${activeConv.participants?.length || 0} members`
+                                                : (!activeConv.other_participant
+                                                    ? "personal cloud storage"
+                                                    : (activeConv.other_participant.status === "online"
+                                                        ? "online"
+                                                        : formatLastSeen(activeConv.other_participant.last_seen))))}
+                                    </span>
+                                </div>
+                            )}
 
-                            <div className="ht-header-actions">
-                                {/* 
-                                    TODO: Voice & Video Calls — coming soon (requires WebRTC + TURN server)
-                                    <button className="ht-action-circle-btn" title="Voice Call"><svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.94.725l.548 2.2a1 1 0 01-.321.988l-1.305.98a10.582 10.582 0 004.872 4.872l.98-1.305a1 1 0 01.988-.321l2.2.548a1 1 0 01.725.94V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" /></svg></button>
-                                    <button className="ht-action-circle-btn" title="Video Call"><svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg></button>
-                                */}
+                            <div className="ht-header-actions" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                {!isInChatSearchOpen && (
+                                    <button
+                                        className="ht-action-circle-btn"
+                                        style={{ color: t.text }}
+                                        onClick={() => {
+                                            setIsInChatSearchOpen(true);
+                                            setInChatSearchQuery("");
+                                            setInChatSearchMatchIndex(0);
+                                        }}
+                                        title="Search Messages in Chat"
+                                    >
+                                        <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                                        </svg>
+                                    </button>
+                                )}
                                 <button
                                     className="ht-action-circle-btn"
                                     style={{ color: showInspector ? t.accent : t.text }}
@@ -1521,14 +2015,81 @@ export default function ChatDashboard({ user, onLogout }) {
                             </div>
                         </div>
 
+                        {/* Pinned Message Banner */}
+                        {pinnedMessageIdMap[activeConv?.id] && (() => {
+                            const pinnedMsgId = pinnedMessageIdMap[activeConv.id];
+                            const pinnedMsg = messages.find(m => (m.id || m.message_id) === pinnedMsgId);
+                            if (!pinnedMsg) return null;
+                            const isSelf = pinnedMsg.sender_id === user.userId;
+                            const senderTitle = isSelf ? "You" : (activeConv.display_name || "Participant");
+                            return (
+                                <div
+                                    style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        justifyContent: "space-between",
+                                        padding: "8px 16px",
+                                        background: "rgba(3, 52, 110, 0.08)",
+                                        backdropFilter: "blur(8px)",
+                                        borderBottom: t.border,
+                                        cursor: "pointer",
+                                        zIndex: 10
+                                    }}
+                                    onClick={() => {
+                                        const el = document.getElementById(`msg-${pinnedMsgId}`);
+                                        if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+                                    }}
+                                >
+                                    <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                                        <svg width="16" height="16" fill={t.accent} viewBox="0 0 24 24" style={{ flexShrink: 0 }}>
+                                            <path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5v6l1 1 1-1v-6h5v-2l-2-2z" />
+                                        </svg>
+                                        <div style={{ minWidth: 0 }}>
+                                            <div style={{ fontSize: 11, fontWeight: 700, color: t.accent }}>Pinned Message • {senderTitle}</div>
+                                            <div style={{ fontSize: 12, color: t.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                                {pinnedMsg.content || (pinnedMsg.message_type === "image" ? "📷 Image" : "Attachment")}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleTogglePin(pinnedMsg);
+                                        }}
+                                        style={{
+                                            background: "none",
+                                            border: "none",
+                                            color: t.textMuted,
+                                            cursor: "pointer",
+                                            padding: 4,
+                                            display: "flex",
+                                            alignItems: "center"
+                                        }}
+                                        title="Unpin Message"
+                                    >
+                                        ✕
+                                    </button>
+                                </div>
+                            );
+                        })()}
+
                         {/* Interactive Scroll Pane */}
-                        <div className="ht-message-stream" ref={chatContainerRef} onScroll={handleChatScroll} onClick={handleCloseContextMenu} style={{ position: "relative" }}>
+                        <div className="ht-message-stream" ref={chatContainerRef} onScroll={handleChatScroll} onClick={handleCloseContextMenu} onPaste={handlePaste} style={{ position: "relative" }}>
                             {messages.map(m => {
                                 const isSelf = m.sender_id === user.userId;
                                 const parentMsg = m.reply_to_id ? messages.find(msg => (msg.id || msg.message_id) === m.reply_to_id) : null;
+                                const isSearchMatched = inChatSearchQuery.trim() && m.content?.toLowerCase().includes(inChatSearchQuery.toLowerCase());
+                                const isCurrentSearchMatch = isSearchMatched && searchMatchingMessages[inChatSearchMatchIndex]?.id === (m.id || m.message_id);
 
                                 return (
-                                    <div id={`msg-${m.id || m.message_id}`} key={m.id || m.message_id} className={`ht-msg-row ${isSelf ? "self" : "recv"}`}>
+                                    <div
+                                        id={`msg-${m.id || m.message_id}`}
+                                        key={m.id || m.message_id}
+                                        className={`ht-msg-row ${isSelf ? "self" : "recv"}`}
+                                        onMouseEnter={() => setHoveredMsgId(m.id || m.message_id)}
+                                        onMouseLeave={() => setHoveredMsgId(null)}
+                                        style={{ position: "relative" }}
+                                    >
                                         <div className="ht-msg-avatar">
                                             {isSelf ? (
                                                 myProfile.avatar_url ? (
@@ -1537,19 +2098,39 @@ export default function ChatDashboard({ user, onLogout }) {
                                                     user?.username?.[0]?.toUpperCase() || "U"
                                                 )
                                             ) : (
-                                                activeConv.avatar_url ? (
-                                                    <img src={activeConv.avatar_url} alt="" style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} />
+                                                m.sender_avatar ? (
+                                                    <img src={m.sender_avatar} alt="" style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} />
                                                 ) : (
-                                                    activeConv.display_name?.[0]?.toUpperCase() || "@"
+                                                    (m.sender_name?.[0] || activeConv.display_name?.[0])?.toUpperCase() || "@"
                                                 )
                                             )}
                                         </div>
-                                        <div className="ht-msg-bubble-box">
+                                        <div className="ht-msg-bubble-box" style={{ position: "relative" }}>
+
                                             <div
                                                 className="ht-msg-bubble"
                                                 onContextMenu={(e) => handleContextMenu(e, m)}
-                                                style={{ background: isSelf ? t.bubbleSent : t.bubbleRecv, color: isSelf ? t.bubbleSentText : t.bubbleRecvText, padding: m.message_type === "image" ? "6px" : "12px 16px", cursor: "context-menu" }}
+                                                style={{
+                                                    background: isSelf ? t.bubbleSent : t.bubbleRecv,
+                                                    color: isSelf ? t.bubbleSentText : t.bubbleRecvText,
+                                                    padding: m.message_type === "image" ? "6px" : "12px 16px",
+                                                    cursor: "context-menu",
+                                                    border: isCurrentSearchMatch ? "2px solid #EAB308" : (isSearchMatched ? "1.5px solid rgba(234, 179, 8, 0.6)" : "1px solid transparent"),
+                                                    boxShadow: isCurrentSearchMatch ? "0 0 16px rgba(234, 179, 8, 0.5)" : "none",
+                                                    transition: "all 0.2s ease"
+                                                }}
                                             >
+                                                {activeConv.type === "group" && !isSelf && (
+                                                    <div style={{
+                                                        fontSize: "11.5px",
+                                                        fontWeight: "800",
+                                                        color: getSenderNameColor(m.sender_id),
+                                                        marginBottom: "4px",
+                                                        letterSpacing: "0.2px"
+                                                    }}>
+                                                        {m.sender_name || "Participant"}
+                                                    </div>
+                                                )}
                                                 {m.reply_to_id && (
                                                     <div
                                                         style={{
@@ -1615,6 +2196,49 @@ export default function ChatDashboard({ user, onLogout }) {
                                                     m.content
                                                 )}
                                             </div>
+
+                                            {/* Reaction Badges */}
+                                            {m.reactions && Object.keys(m.reactions).length > 0 && (
+                                                <div style={{
+                                                    display: "flex",
+                                                    flexWrap: "wrap",
+                                                    gap: "4px",
+                                                    marginTop: "4px",
+                                                    justifyContent: isSelf ? "flex-end" : "flex-start"
+                                                }}>
+                                                    {Object.entries(m.reactions).map(([emoji, uids]) => {
+                                                        const hasReacted = uids.includes(user.userId);
+                                                        return (
+                                                            <button
+                                                                key={emoji}
+                                                                type="button"
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    handleToggleReaction(m, emoji);
+                                                                }}
+                                                                style={{
+                                                                    background: hasReacted ? "rgba(99, 102, 241, 0.25)" : "rgba(0, 0, 0, 0.2)",
+                                                                    border: hasReacted ? "1px solid #6366f1" : "1px solid transparent",
+                                                                    borderRadius: "12px",
+                                                                    padding: "2px 6px",
+                                                                    fontSize: "12px",
+                                                                    cursor: "pointer",
+                                                                    display: "flex",
+                                                                    alignItems: "center",
+                                                                    gap: "4px",
+                                                                    color: isSelf ? t.bubbleSentText : t.bubbleRecvText,
+                                                                    transition: "all 0.15s ease"
+                                                                }}
+                                                                title={`${uids.length} reaction${uids.length > 1 ? "s" : ""}`}
+                                                            >
+                                                                <span>{emoji}</span>
+                                                                <span style={{ fontSize: "10.5px", fontWeight: "700" }}>{uids.length}</span>
+                                                            </button>
+                                                        );
+                                                    })}
+                                                </div>
+                                            )}
+
                                             <span style={{ fontSize: 9.5, color: t.textMuted, marginTop: 4, display: "flex", alignItems: "center", gap: 4 }}>
                                                 {formatTime(m.created_at)}
                                                 {m.is_edited && <span style={{ fontStyle: "italic", opacity: 0.7 }}>(edited)</span>}
@@ -1664,22 +2288,46 @@ export default function ChatDashboard({ user, onLogout }) {
                             <div
                                 style={{
                                     position: "fixed",
-                                    top: contextMenu.y,
-                                    left: contextMenu.x,
+                                    top: Math.min(contextMenu.y, window.innerHeight - 280),
+                                    left: Math.min(contextMenu.x, window.innerWidth - 200),
                                     zIndex: 10000,
                                     background: "rgba(20, 25, 35, 0.96)",
                                     backdropFilter: "blur(14px)",
                                     border: "1px solid rgba(255, 255, 255, 0.12)",
-                                    borderRadius: "12px",
+                                    borderRadius: "14px",
                                     boxShadow: "0 12px 36px rgba(0, 0, 0, 0.5)",
-                                    padding: "6px",
-                                    minWidth: "160px",
+                                    padding: "8px",
+                                    minWidth: "180px",
                                     display: "flex",
                                     flexDirection: "column",
-                                    gap: "2px"
+                                    gap: "4px"
                                 }}
                                 onClick={(e) => e.stopPropagation()}
                             >
+                                {/* Quick Emoji Reactions Header */}
+                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "4px 2px 8px", borderBottom: "1px solid rgba(255, 255, 255, 0.1)" }}>
+                                    {REACTION_EMOJIS.map(emoji => (
+                                        <button
+                                            key={emoji}
+                                            type="button"
+                                            onClick={() => handleToggleReaction(contextMenu.message, emoji)}
+                                            style={{
+                                                background: "none",
+                                                border: "none",
+                                                fontSize: "18px",
+                                                cursor: "pointer",
+                                                padding: "4px",
+                                                borderRadius: "8px",
+                                                transition: "transform 0.15s ease"
+                                            }}
+                                            onMouseEnter={(e) => e.currentTarget.style.transform = "scale(1.25)"}
+                                            onMouseLeave={(e) => e.currentTarget.style.transform = "scale(1)"}
+                                        >
+                                            {emoji}
+                                        </button>
+                                    ))}
+                                </div>
+
                                 <button
                                     type="button"
                                     onClick={() => handleStartReply(contextMenu.message)}
@@ -1699,10 +2347,32 @@ export default function ChatDashboard({ user, onLogout }) {
                                     onMouseOver={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.1)"}
                                     onMouseOut={(e) => e.currentTarget.style.background = "transparent"}
                                 >
-                                    💬 Reply
+                                    Reply
                                 </button>
 
-                                {contextMenu.message.content && (
+                                <button
+                                    type="button"
+                                    onClick={() => handleTogglePin(contextMenu.message)}
+                                    style={{
+                                        background: "transparent",
+                                        border: "none",
+                                        color: "#ffffff",
+                                        padding: "8px 12px",
+                                        borderRadius: "8px",
+                                        fontSize: "13px",
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: "10px",
+                                        cursor: "pointer",
+                                        textAlign: "left"
+                                    }}
+                                    onMouseOver={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.1)"}
+                                    onMouseOut={(e) => e.currentTarget.style.background = "transparent"}
+                                >
+                                    {pinnedMessageIdMap[activeConv?.id] === (contextMenu.message.id || contextMenu.message.message_id) ? "Unpin Message" : "Pin Message"}
+                                </button>
+
+                                 {contextMenu.message.content && (
                                     <button
                                         type="button"
                                         onClick={() => handleCopyMsgText(contextMenu.message)}
@@ -1722,7 +2392,31 @@ export default function ChatDashboard({ user, onLogout }) {
                                         onMouseOver={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.1)"}
                                         onMouseOut={(e) => e.currentTarget.style.background = "transparent"}
                                     >
-                                        📋 Copy Text
+                                        Copy Text
+                                    </button>
+                                )}
+
+                                {contextMenu.message.message_type === "image" && (
+                                    <button
+                                        type="button"
+                                        onClick={() => handleCopyImage(contextMenu.message)}
+                                        style={{
+                                            background: "transparent",
+                                            border: "none",
+                                            color: "#ffffff",
+                                            padding: "8px 12px",
+                                            borderRadius: "8px",
+                                            fontSize: "13px",
+                                            display: "flex",
+                                            alignItems: "center",
+                                            gap: "10px",
+                                            cursor: "pointer",
+                                            textAlign: "left"
+                                        }}
+                                        onMouseOver={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.1)"}
+                                        onMouseOut={(e) => e.currentTarget.style.background = "transparent"}
+                                    >
+                                        Copy Image
                                     </button>
                                 )}
 
@@ -1746,7 +2440,7 @@ export default function ChatDashboard({ user, onLogout }) {
                                         onMouseOver={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.1)"}
                                         onMouseOut={(e) => e.currentTarget.style.background = "transparent"}
                                     >
-                                        ✏️ Edit Message
+                                        Edit Message
                                     </button>
                                 )}
 
@@ -1771,7 +2465,7 @@ export default function ChatDashboard({ user, onLogout }) {
                                         onMouseOver={(e) => e.currentTarget.style.background = "rgba(239, 68, 68, 0.15)"}
                                         onMouseOut={(e) => e.currentTarget.style.background = "transparent"}
                                     >
-                                        🗑️ Delete Message
+                                        Delete Message
                                     </button>
                                 )}
                             </div>
@@ -1894,23 +2588,46 @@ export default function ChatDashboard({ user, onLogout }) {
                                     stroke="currentColor"
                                     strokeWidth="2.5"
                                     viewBox="0 0 24 24"
-                                    style={{ cursor: "pointer", opacity: 0.65 }}
+                                    style={{ cursor: "pointer", opacity: 0.65, marginBottom: "8px" }}
                                     title="Attach File"
                                     onClick={() => fileInputRef.current?.click()}
                                 >
                                     <path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 11-2.828-2.828l6.414-6.414a4 4 0 015.656 5.656l-6.415 6.415a6 6 0 11-8.486-8.486L10.5 5" />
                                 </svg>
 
-                                <input
-                                    type="text"
+                                <textarea
+                                    ref={inputTextareaRef}
+                                    rows={1}
                                     placeholder={selectedFile ? "Add a caption..." : "Type a message..."}
                                     value={messageText}
                                     onChange={(e) => {
                                         setMessageText(e.target.value);
                                         handleKeyPress();
                                     }}
+                                    onKeyDown={(e) => {
+                                        if (e.key === "Enter") {
+                                            if (e.shiftKey) {
+                                                return; // Allow Shift + Enter to insert a new line naturally
+                                            }
+                                            e.preventDefault();
+                                            handleSendMessage(e);
+                                        }
+                                    }}
+                                    onPaste={handlePaste}
                                     className="ht-chat-input-field"
-                                    style={{ color: t.text }}
+                                    style={{
+                                        color: t.text,
+                                        resize: "none",
+                                        border: "none",
+                                        outline: "none",
+                                        background: "transparent",
+                                        fontFamily: "inherit",
+                                        fontSize: "14px",
+                                        maxHeight: "100px",
+                                        overflowY: "auto",
+                                        paddingTop: "6px",
+                                        paddingBottom: "6px"
+                                    }}
                                 />
 
                                 <div className="ht-input-actions">
@@ -2184,15 +2901,49 @@ export default function ChatDashboard({ user, onLogout }) {
                         </div>
 
                         <div className="ht-inspector-actions" style={{ borderBottom: t.border, paddingBottom: 20 }}>
-                            <button className="ht-inspector-action-btn" style={{ color: t.text }}>
+                            <button
+                                className="ht-inspector-action-btn"
+                                style={{ color: t.text }}
+                                onClick={() => {
+                                    setViewingParticipantProfile({
+                                        display_name: activeConv.display_name,
+                                        username: activeConv.other_participant?.username || activeConv.display_name,
+                                        avatar_url: activeConv.avatar_url,
+                                        status: activeConv.other_participant?.status || "online",
+                                        last_seen: activeConv.other_participant?.last_seen
+                                    });
+                                }}
+                                title="View User Profile"
+                            >
                                 <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
                                 <span>Profile</span>
                             </button>
-                            <button className="ht-inspector-action-btn" style={{ color: t.text }}>
-                                <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
-                                <span>Mute</span>
+                            <button
+                                className="ht-inspector-action-btn"
+                                style={{ color: mutedConvIds[activeConv.id] ? "#ef4444" : t.text }}
+                                onClick={() => toggleMuteConversation(activeConv.id)}
+                                title={mutedConvIds[activeConv.id] ? "Unmute Notifications" : "Mute Notifications"}
+                            >
+                                {mutedConvIds[activeConv.id] ? (
+                                    <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
+                                    </svg>
+                                ) : (
+                                    <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
+                                )}
+                                <span>{mutedConvIds[activeConv.id] ? "Muted" : "Mute"}</span>
                             </button>
-                            <button className="ht-inspector-action-btn" style={{ color: t.text }}>
+                            <button
+                                className="ht-inspector-action-btn"
+                                style={{ color: isInChatSearchOpen ? t.accent : t.text }}
+                                onClick={() => {
+                                    setIsInChatSearchOpen(true);
+                                    setInChatSearchQuery("");
+                                    setInChatSearchMatchIndex(0);
+                                }}
+                                title="Search Messages in Chat"
+                            >
                                 <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
                                 <span>Search</span>
                             </button>
@@ -2260,6 +3011,311 @@ export default function ChatDashboard({ user, onLogout }) {
                     </div>
                 )}
             </div>
+
+            {/* Participant Profile Modal */}
+            {viewingParticipantProfile && (
+                <div
+                    style={{
+                        position: "fixed",
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        background: "rgba(0, 0, 0, 0.6)",
+                        backdropFilter: "blur(8px)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        zIndex: 9999,
+                        padding: 20
+                    }}
+                    onClick={() => setViewingParticipantProfile(null)}
+                >
+                    <div
+                        style={{
+                            width: 360,
+                            background: t.cardBg,
+                            border: t.border,
+                            borderRadius: 24,
+                            padding: 24,
+                            boxShadow: "0 20px 50px rgba(0,0,0,0.4)",
+                            display: "flex",
+                            flexDirection: "column",
+                            alignItems: "center",
+                            position: "relative",
+                            animation: "fadeIn 0.2s ease"
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <button
+                            onClick={() => setViewingParticipantProfile(null)}
+                            style={{
+                                position: "absolute",
+                                top: 16,
+                                right: 16,
+                                background: "none",
+                                border: "none",
+                                color: t.textMuted,
+                                fontSize: 18,
+                                cursor: "pointer",
+                                fontWeight: "bold"
+                            }}
+                        >
+                            ✕
+                        </button>
+
+                        <div style={{ width: 96, height: 96, borderRadius: "50%", background: "#4f46e5", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontSize: 36, fontWeight: 800, overflow: "hidden", marginBottom: 16, border: `3px solid ${t.accent}` }}>
+                            {viewingParticipantProfile.avatar_url ? (
+                                <img src={viewingParticipantProfile.avatar_url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                            ) : (
+                                viewingParticipantProfile.display_name?.[0]?.toUpperCase() || "@"
+                            )}
+                        </div>
+
+                        <h3 style={{ margin: 0, fontSize: 20, color: t.text, fontWeight: 800 }}>{viewingParticipantProfile.display_name}</h3>
+                        <div style={{ fontSize: 13, color: t.accent, fontWeight: 600, marginTop: 4 }}>@{viewingParticipantProfile.username}</div>
+
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 12, padding: "4px 12px", background: "rgba(120, 120, 120, 0.08)", borderRadius: 12, fontSize: 12, color: viewingParticipantProfile.status === "online" ? "#34A853" : t.textMuted }}>
+                            <span style={{ width: 8, height: 8, borderRadius: "50%", background: viewingParticipantProfile.status === "online" ? "#34A853" : t.textMuted }} />
+                            {viewingParticipantProfile.status === "online" ? "Active Now" : (viewingParticipantProfile.last_seen ? `Last seen ${formatLastSeen(viewingParticipantProfile.last_seen)}` : "Offline")}
+                        </div>
+
+                        <div style={{ width: "100%", display: "flex", gap: 12, marginTop: 24 }}>
+                            <div style={{ flex: 1, padding: 12, borderRadius: 14, background: "rgba(120, 120, 120, 0.05)", border: t.border, textAlign: "center" }}>
+                                <div style={{ fontSize: 16, fontWeight: 800, color: t.text }}>{sharedImages.length}</div>
+                                <div style={{ fontSize: 10, color: t.textMuted, marginTop: 2 }}>Shared Images</div>
+                            </div>
+                            <div style={{ flex: 1, padding: 12, borderRadius: 14, background: "rgba(120, 120, 120, 0.05)", border: t.border, textAlign: "center" }}>
+                                <div style={{ fontSize: 16, fontWeight: 800, color: t.text }}>{sharedFiles.length}</div>
+                                <div style={{ fontSize: 10, color: t.textMuted, marginTop: 2 }}>Shared Files</div>
+                            </div>
+                        </div>
+
+                        {/* Group Member List segment */}
+                        {activeConv.type === "group" && (
+                            <div style={{ borderBottom: t.border, paddingBottom: 16, marginBottom: 16 }}>
+                                <div style={{ fontSize: 13, fontWeight: "755", marginBottom: 10, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                                    <span>Group Members</span>
+                                    <span style={{ fontSize: 11, color: t.textMuted }}>{activeConv.participants?.length || 0}</span>
+                                </div>
+                                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                                    {activeConv.participants?.map(p => (
+                                        <div key={p.user_id || p.id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                                            <div style={{ width: 32, height: 32, borderRadius: "50%", background: "#6366f1", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 12 }}>
+                                                {p.avatar_url ? <img src={p.avatar_url} alt="" style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} /> : ((p.display_name || p.username)?.[0]?.toUpperCase() || "@")}
+                                            </div>
+                                            <div style={{ flex: 1, overflow: "hidden" }}>
+                                                <div style={{ fontSize: 13, fontWeight: 700, color: t.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                                    {p.display_name || p.username} {p.user_id === user.userId && <span style={{ fontSize: 10, opacity: 0.6 }}>(You)</span>}
+                                                </div>
+                                                <div style={{ fontSize: 11, color: p.status === "online" ? "#34A853" : t.textMuted }}>
+                                                    {p.status === "online" ? "online" : "offline"}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        <button
+                            onClick={() => setViewingParticipantProfile(null)}
+                            style={{
+                                width: "100%",
+                                padding: "12px",
+                                borderRadius: 14,
+                                border: "none",
+                                background: t.accent,
+                                color: "white",
+                                fontWeight: 800,
+                                fontSize: 14,
+                                cursor: "pointer",
+                                marginTop: 20
+                            }}
+                        >
+                            Close Profile
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* Create Group Modal */}
+            {isCreateGroupOpen && (
+                <div style={{
+                    position: "fixed",
+                    inset: 0,
+                    zIndex: 9999,
+                    background: "rgba(0, 0, 0, 0.65)",
+                    backdropFilter: "blur(10px)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    padding: 20
+                }}>
+                    <div style={{
+                        background: t.cardBg,
+                        border: t.border,
+                        borderRadius: 24,
+                        width: "100%",
+                        maxWidth: 440,
+                        padding: 24,
+                        boxShadow: "0 20px 50px rgba(0,0,0,0.4)",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 20
+                    }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                            <h3 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: t.text }}>Create Group Chat</h3>
+                            <button
+                                onClick={() => {
+                                    setIsCreateGroupOpen(false);
+                                    setGroupTitle("");
+                                    setSelectedGroupMembers([]);
+                                }}
+                                style={{ background: "none", border: "none", color: t.textMuted, cursor: "pointer", fontSize: 18, fontWeight: 700 }}
+                            >
+                                ✕
+                            </button>
+                        </div>
+
+                        <form onSubmit={handleCreateGroupSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                            <div>
+                                <label style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.6px", color: t.textMuted, display: "block", marginBottom: 6 }}>
+                                    Group Title
+                                </label>
+                                <input
+                                    type="text"
+                                    placeholder="e.g. Design System Team"
+                                    value={groupTitle}
+                                    onChange={(e) => setGroupTitle(e.target.value)}
+                                    style={{
+                                        width: "100%",
+                                        padding: "12px 14px",
+                                        borderRadius: 14,
+                                        background: t.inputBg,
+                                        border: t.inputBorder,
+                                        color: t.text,
+                                        outline: "none",
+                                        fontSize: 14,
+                                        fontWeight: 600
+                                    }}
+                                    autoFocus
+                                />
+                            </div>
+
+                            <div>
+                                <label style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.6px", color: t.textMuted, display: "block", marginBottom: 6 }}>
+                                    Add Members
+                                </label>
+                                {selectedGroupMembers.length > 0 && (
+                                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+                                        {selectedGroupMembers.map(m => (
+                                            <span key={m.id} style={{
+                                                background: "rgba(56, 189, 248, 0.15)",
+                                                color: "#38bdf8",
+                                                border: "1px solid rgba(56, 189, 248, 0.3)",
+                                                borderRadius: 20,
+                                                padding: "4px 10px",
+                                                fontSize: 12,
+                                                fontWeight: 700,
+                                                display: "inline-flex",
+                                                alignItems: "center",
+                                                gap: 6
+                                            }}>
+                                                {m.display_name || m.username}
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleRemoveGroupMember(m.id)}
+                                                    style={{ background: "none", border: "none", color: "#38bdf8", cursor: "pointer", padding: 0, fontSize: 12, fontWeight: 800 }}
+                                                >
+                                                    ✕
+                                                </button>
+                                            </span>
+                                        ))}
+                                    </div>
+                                )}
+
+                                <input
+                                    type="text"
+                                    placeholder="Search user to add..."
+                                    value={groupSearchQuery}
+                                    onChange={(e) => setGroupSearchQuery(e.target.value)}
+                                    style={{
+                                        width: "100%",
+                                        padding: "10px 14px",
+                                        borderRadius: 14,
+                                        background: t.inputBg,
+                                        border: t.inputBorder,
+                                        color: t.text,
+                                        outline: "none",
+                                        fontSize: 13
+                                    }}
+                                />
+
+                                {groupSearchResults.length > 0 && (
+                                    <div style={{
+                                        marginTop: 6,
+                                        maxHeight: 160,
+                                        overflowY: "auto",
+                                        borderRadius: 12,
+                                        background: t.cardBg,
+                                        border: t.border,
+                                        boxShadow: "0 10px 25px rgba(0,0,0,0.2)"
+                                    }}>
+                                        {groupSearchResults.map(u => (
+                                            <div
+                                                key={u.id}
+                                                onClick={() => handleSelectGroupMember(u)}
+                                                style={{
+                                                    padding: "10px 14px",
+                                                    display: "flex",
+                                                    alignItems: "center",
+                                                    gap: 10,
+                                                    cursor: "pointer",
+                                                    borderBottom: t.border,
+                                                    transition: "background 0.2s ease"
+                                                }}
+                                                onMouseEnter={(e) => e.currentTarget.style.background = "rgba(120, 120, 120, 0.08)"}
+                                                onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                                            >
+                                                <div style={{ width: 28, height: 28, borderRadius: "50%", background: "#6366f1", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 11 }}>
+                                                    {u.avatar_url ? <img src={u.avatar_url} alt="" style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} /> : (u.username?.[0]?.toUpperCase() || "U")}
+                                                </div>
+                                                <div>
+                                                    <div style={{ fontSize: 13, fontWeight: 700, color: t.text }}>{u.display_name || u.username}</div>
+                                                    <div style={{ fontSize: 11, color: t.textMuted }}>@{u.username}</div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+
+                            <button
+                                type="submit"
+                                disabled={isCreatingGroup || !groupTitle.trim() || selectedGroupMembers.length === 0}
+                                style={{
+                                    marginTop: 10,
+                                    width: "100%",
+                                    padding: "12px",
+                                    borderRadius: 14,
+                                    background: "linear-gradient(135deg, #03346E, #0284c7)",
+                                    color: "#ffffff",
+                                    border: "none",
+                                    fontWeight: 800,
+                                    fontSize: 14,
+                                    cursor: "pointer",
+                                    opacity: (isCreatingGroup || !groupTitle.trim() || selectedGroupMembers.length === 0) ? 0.5 : 1,
+                                    boxShadow: "0 4px 14px rgba(2, 132, 199, 0.35)",
+                                    transition: "all 0.2s ease"
+                                }}
+                            >
+                                {isCreatingGroup ? "Creating Group..." : "Create Group Chat"}
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

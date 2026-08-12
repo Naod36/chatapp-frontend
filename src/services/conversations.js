@@ -13,6 +13,17 @@ export const conversationService = {
         });
     },
 
+    async createGroup(title, participantIds, avatarUrl = null) {
+        return apiFetch("/conversations/group", {
+            method: "POST",
+            body: JSON.stringify({
+                title,
+                participant_ids: participantIds,
+                avatar_url: avatarUrl,
+            }),
+        });
+    },
+
     async listConversations() {
         return apiFetch("/conversations");
     },
