@@ -196,6 +196,23 @@ export default function ChatDashboard({ user, onLogout }) {
     const [isHeaderMenuOpen, setIsHeaderMenuOpen] = useState(false);
     const [viewingParticipantProfile, setViewingParticipantProfile] = useState(null);
 
+    // Dynamic document title tab unread indicator
+    useEffect(() => {
+        const totalUnread = conversations.reduce((acc, c) => {
+            const isMuted = Array.isArray(mutedConvIds) ? mutedConvIds.includes(c.id) : !!mutedConvIds?.[c.id];
+            if (!isMuted) {
+                return acc + (c.unread_count || 0);
+            }
+            return acc;
+        }, 0);
+
+        if (totalUnread > 0) {
+            document.title = `(${totalUnread}) FlowChat — Realtime Messaging`;
+        } else {
+            document.title = "FlowChat — Realtime Messaging";
+        }
+    }, [conversations, mutedConvIds]);
+
     const isConvPinned = (c) => {
         if (!c) return false;
         const isSaved = c.id === "virtual-saved-messages" || (c.type === "direct" && !c.other_participant);
@@ -315,33 +332,88 @@ export default function ChatDashboard({ user, onLogout }) {
     const isUserGroupAdmin = (conv, userId) => {
         if (!conv || conv.type !== "group") return false;
         const currentCreator = conv.creator_id;
+        if (currentCreator === userId) return true;
+        const participant = (conv.participants || []).find(p => (p.user_id || p.id) === userId);
+        if (participant && (participant.role === "admin" || participant.role === "creator")) return true;
         const admins = groupAdminsMap[conv.id] || [];
-        return currentCreator === userId || admins.includes(userId);
+        return admins.includes(userId);
     };
 
-    const handleMakeAdmin = (convId, memberId) => {
+    const handleMakeAdmin = (convId, memberId, isAdmin = true) => {
+        if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+            socketRef.current.send(JSON.stringify({
+                action: "update_group_admin",
+                conversation_id: convId,
+                target_user_id: memberId,
+                is_admin: isAdmin
+            }));
+        }
+
         setGroupAdminsMap(prev => {
             const currentAdmins = prev[convId] || [];
-            if (currentAdmins.includes(memberId)) return prev;
-            const updated = { ...prev, [convId]: [...currentAdmins, memberId] };
+            let updatedAdmins;
+            if (isAdmin) {
+                updatedAdmins = Array.from(new Set([...currentAdmins, memberId]));
+            } else {
+                updatedAdmins = currentAdmins.filter(id => id !== memberId);
+            }
+            const updated = { ...prev, [convId]: updatedAdmins };
             localStorage.setItem("group_admins_map", JSON.stringify(updated));
             return updated;
+        });
+
+        setConversations(prev => prev.map(c => {
+            if (c.id === convId && c.participants) {
+                const updatedParts = c.participants.map(p => {
+                    const pId = p.user_id || p.id;
+                    if (pId === memberId) {
+                        return { ...p, role: isAdmin ? "admin" : "member" };
+                    }
+                    return p;
+                });
+                return { ...c, participants: updatedParts };
+            }
+            return c;
+        }));
+
+        setActiveConv(prev => {
+            if (prev && prev.id === convId && prev.participants) {
+                const updatedParts = prev.participants.map(p => {
+                    const pId = p.user_id || p.id;
+                    if (pId === memberId) {
+                        return { ...p, role: isAdmin ? "admin" : "member" };
+                    }
+                    return p;
+                });
+                return { ...prev, participants: updatedParts };
+            }
+            return prev;
         });
     };
 
     const handleAddMemberToGroup = (newMember) => {
         if (!activeConv || activeConv.type !== "group") return;
+        const memberId = newMember.user_id || newMember.id;
 
-        const exists = activeConv.participants?.some(p => (p.user_id || p.id) === (newMember.user_id || newMember.id));
+        if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+            socketRef.current.send(JSON.stringify({
+                action: "add_group_member",
+                conversation_id: activeConv.id,
+                target_user_id: memberId
+            }));
+        }
+
+        const exists = activeConv.participants?.some(p => (p.user_id || p.id) === memberId);
         if (exists) return;
 
         const updatedParticipant = {
-            user_id: newMember.user_id || newMember.id,
+            user_id: memberId,
             username: newMember.username,
             display_name: newMember.display_name || newMember.username,
             avatar_url: newMember.avatar_url || null,
             status: newMember.status || "offline",
-            last_seen: newMember.last_seen || null
+            last_seen: newMember.last_seen || null,
+            role: "member"
         };
 
         const updatedParticipants = [...(activeConv.participants || []), updatedParticipant];
@@ -525,9 +597,9 @@ export default function ChatDashboard({ user, onLogout }) {
 
             // Auto-close AudioContext to prevent Firefox Web Audio pool exhaustion
             setTimeout(() => {
-                ctx.close().catch(() => {});
+                ctx.close().catch(() => { });
             }, 350);
-        } catch (e) {}
+        } catch (e) { }
     };
 
     const toggleSoundEnabled = () => {
@@ -927,6 +999,50 @@ export default function ChatDashboard({ user, onLogout }) {
                         }
                         return prev;
                     });
+                } else if (data.event === "group_admin_updated") {
+                    const { conversation_id, target_user_id, is_admin } = data;
+                    setGroupAdminsMap(prev => {
+                        const currentAdmins = prev[conversation_id] || [];
+                        let updatedAdmins;
+                        if (is_admin) {
+                            updatedAdmins = Array.from(new Set([...currentAdmins, target_user_id]));
+                        } else {
+                            updatedAdmins = currentAdmins.filter(id => id !== target_user_id);
+                        }
+                        const updated = { ...prev, [conversation_id]: updatedAdmins };
+                        localStorage.setItem("group_admins_map", JSON.stringify(updated));
+                        return updated;
+                    });
+
+                    setConversations(prev => prev.map(c => {
+                        if (c.id === conversation_id && c.participants) {
+                            const updatedParts = c.participants.map(p => {
+                                const pId = p.user_id || p.id;
+                                if (pId === target_user_id) {
+                                    return { ...p, role: is_admin ? "admin" : "member" };
+                                }
+                                return p;
+                            });
+                            return { ...c, participants: updatedParts };
+                        }
+                        return c;
+                    }));
+
+                    setActiveConv(prev => {
+                        if (prev && prev.id === conversation_id && prev.participants) {
+                            const updatedParts = prev.participants.map(p => {
+                                const pId = p.user_id || p.id;
+                                if (pId === target_user_id) {
+                                    return { ...p, role: is_admin ? "admin" : "member" };
+                                }
+                                return p;
+                            });
+                            return { ...prev, participants: updatedParts };
+                        }
+                        return prev;
+                    });
+                } else if (data.event === "group_member_added") {
+                    fetchConversations();
                 }
             },
             // onOpen callback
@@ -964,7 +1080,9 @@ export default function ChatDashboard({ user, onLogout }) {
 
                 const history = await conversationService.getMessages(response.conversation_id);
                 const mapped = (history || []).map(m => ({ ...m, id: m.message_id || m.id }));
-                setMessages(mapped);
+                const uniqueMap = new Map();
+                mapped.forEach(m => uniqueMap.set(m.id, m));
+                setMessages(Array.from(uniqueMap.values()));
             } catch (err) {
                 console.error("Failed to lazy-create saved messages:", err);
             }
@@ -983,7 +1101,9 @@ export default function ChatDashboard({ user, onLogout }) {
         try {
             const history = await conversationService.getMessages(conv.id);
             const mapped = (history || []).map(m => ({ ...m, id: m.message_id || m.id }));
-            setMessages(mapped);
+            const uniqueMap = new Map();
+            mapped.forEach(m => uniqueMap.set(m.id, m));
+            setMessages(Array.from(uniqueMap.values()));
 
             // Read conversation notification
             socketRef.current?.send(JSON.stringify({
@@ -1341,7 +1461,7 @@ export default function ChatDashboard({ user, onLogout }) {
             console.error("Failed to copy image:", err);
             try {
                 await navigator.clipboard.writeText(getAssetUrl(msg.media_url));
-            } catch (e) {}
+            } catch (e) { }
         }
         handleCloseContextMenu();
     };
@@ -1608,33 +1728,33 @@ export default function ChatDashboard({ user, onLogout }) {
                     <>
                         <div className="ht-sidebar-header">
                             <div className="ht-sidebar-title-row" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                                <h2 style={{ margin: 0, fontSize: 20, fontWeight: "800", color: t.text }}>Messages</h2>
-                                
+                                {/* <h2 style={{ margin: 0, fontSize: 20, fontWeight: "800", color: t.text }}>Messages</h2> */}
+
                                 {syncState === "connecting" && (
-                                    <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, fontWeight: 600, color: "#eab308" }}>
-                                        <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#eab308", display: "inline-block" }} />
+                                    <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, fontWeight: 600, color: "#acacacff" }}>
+                                        <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#acacacff", display: "inline-block" }} />
                                         <span>Connecting...</span>
                                     </div>
                                 )}
 
                                 {syncState === "updating" && (
-                                    <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, fontWeight: 600, color: t.accent }}>
-                                        <span style={{ width: 7, height: 7, borderRadius: "50%", background: t.accent, display: "inline-block" }} />
+                                    <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, fontWeight: 600, color: "#acacacff" }}>
+                                        <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#acacacff", display: "inline-block" }} />
                                         <span>Updating...</span>
                                     </div>
                                 )}
 
                                 {syncState === "ready" && (
                                     <span style={{
-                                        fontSize: 11,
-                                        fontWeight: 800,
-                                        letterSpacing: "0.5px",
+                                        fontSize: 16,
+                                        fontWeight: 900,
+                                        letterSpacing: "0.2px",
                                         background: "linear-gradient(135deg, #38bdf8, #818cf8)",
                                         WebkitBackgroundClip: "text",
                                         WebkitTextFillColor: "transparent",
                                         textTransform: "uppercase"
                                     }}>
-                                        FlowChat
+                                        " FlowChat
                                     </span>
                                 )}
                             </div>
@@ -1651,7 +1771,7 @@ export default function ChatDashboard({ user, onLogout }) {
                                         className="ht-search-pill"
                                         style={{ background: t.inputBg, border: t.inputBorder, color: t.text }}
                                     />
-                                                          </div>
+                                </div>
                             </div>
 
                             {/* Pinned Conversations Section (Rendered ABOVE Category Tabs) */}
@@ -1661,7 +1781,7 @@ export default function ChatDashboard({ user, onLogout }) {
 
                                 return (
                                     <div style={{ padding: "8px 16px 4px", borderBottom: t.border }}>
-                                        <div className="ht-section-label" style={{ color: t.accent, paddingLeft: 0, marginBottom: 6, display: "flex", alignItems: "center", gap: 5 }}>
+                                        <div className="ht-section-label" style={{ color: theme === "dark" ? "#38bdf8" : "#082a3bff", paddingLeft: 0, marginBottom: 6, display: "flex", alignItems: "center", gap: 5 }}>
                                             <svg width="12" height="12" fill="currentColor" viewBox="0 0 24 24">
                                                 <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
                                             </svg>
@@ -1684,9 +1804,11 @@ export default function ChatDashboard({ user, onLogout }) {
                                                         padding: "10px 12px",
                                                         borderRadius: 14,
                                                         cursor: "pointer",
-                                                        background: isActive ? "rgba(56, 189, 248, 0.12)" : "rgba(120, 120, 120, 0.05)",
+                                                        background: isActive
+                                                            ? (theme === "dark" ? "rgba(56, 189, 248, 0.12)" : "rgba(3, 52, 110, 0.08)")
+                                                            : (theme === "dark" ? "rgba(120, 120, 120, 0.05)" : "rgba(0, 0, 0, 0.03)"),
                                                         marginBottom: 4,
-                                                        border: isActive ? `1px solid ${t.accent}` : "1px solid transparent",
+                                                        border: isActive ? `1px solid ${theme === "dark" ? "#38bdf8" : "#0284c7"}` : "1px solid transparent",
                                                         transition: "all 0.2s ease"
                                                     }}
                                                 >
@@ -1770,7 +1892,7 @@ export default function ChatDashboard({ user, onLogout }) {
                                                 padding: "6px 8px",
                                                 fontSize: "12px",
                                                 fontWeight: 800,
-                                                color: convoTab === "all" ? t.accent : t.textMuted,
+                                                color: convoTab === "all" ? (theme === "dark" ? "#38bdf8" : t.accent) : t.textMuted,
                                                 cursor: "pointer",
                                                 textAlign: "center",
                                                 whiteSpace: "nowrap",
@@ -1790,7 +1912,7 @@ export default function ChatDashboard({ user, onLogout }) {
                                                 padding: "6px 8px",
                                                 fontSize: "12px",
                                                 fontWeight: 800,
-                                                color: convoTab === "groups" ? t.accent : t.textMuted,
+                                                color: convoTab === "groups" ? (theme === "dark" ? "#38bdf8" : t.accent) : t.textMuted,
                                                 cursor: "pointer",
                                                 display: "flex",
                                                 alignItems: "center",
@@ -1816,69 +1938,69 @@ export default function ChatDashboard({ user, onLogout }) {
                                         </button>
                                     </div>
                                 );
-                        })()}
-                    </div>
+                            })()}
+                        </div>
 
-                    <div className="ht-convo-list">
-                        {isSearching ? (
-                            <div style={{ textAlign: "center", padding: "20px 0", fontSize: 13, color: t.textMuted }}>Scanning database profiles...</div>
-                        ) : searchQuery.trim() ? (
-                            <>
-                                <div className="ht-section-label" style={{ color: t.textMuted }}>Directory matches</div>
-                                {searchResults.map(userItem => (
-                                    <div
-                                        key={userItem.user_id || userItem.id}
-                                        onClick={() => handleStartConversation(userItem)}
-                                        style={{
-                                            display: "flex",
-                                            alignItems: "center",
-                                            gap: 12,
-                                            padding: "10px 12px",
-                                            borderRadius: 12,
-                                            cursor: "pointer",
-                                            background: "rgba(120, 120, 120, 0.05)",
-                                            margin: "0 4px 6px"
-                                        }}
-                                    >
-                                        <div style={{ width: 38, height: 38, borderRadius: "50%", background: "#de4977", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontWeight: "700" }}>
-                                            {(userItem.display_name || userItem.username)[0].toUpperCase()}
+                        <div className="ht-convo-list">
+                            {isSearching ? (
+                                <div style={{ textAlign: "center", padding: "20px 0", fontSize: 13, color: t.textMuted }}>Scanning database profiles...</div>
+                            ) : searchQuery.trim() ? (
+                                <>
+                                    <div className="ht-section-label" style={{ color: t.textMuted }}>Directory matches</div>
+                                    {searchResults.map(userItem => (
+                                        <div
+                                            key={userItem.user_id || userItem.id}
+                                            onClick={() => handleStartConversation(userItem)}
+                                            style={{
+                                                display: "flex",
+                                                alignItems: "center",
+                                                gap: 12,
+                                                padding: "10px 12px",
+                                                borderRadius: 12,
+                                                cursor: "pointer",
+                                                background: "rgba(120, 120, 120, 0.05)",
+                                                margin: "0 4px 6px"
+                                            }}
+                                        >
+                                            <div style={{ width: 38, height: 38, borderRadius: "50%", background: "#de4977", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontWeight: "700" }}>
+                                                {(userItem.display_name || userItem.username)[0].toUpperCase()}
+                                            </div>
+                                            <div>
+                                                <div style={{ fontSize: 13, fontWeight: "700", color: t.text }}>{userItem.display_name || userItem.username}</div>
+                                                <div style={{ fontSize: 11, color: t.textMuted }}>@{userItem.username}</div>
+                                            </div>
                                         </div>
-                                        <div>
-                                            <div style={{ fontSize: 13, fontWeight: "700", color: t.text }}>{userItem.display_name || userItem.username}</div>
-                                            <div style={{ fontSize: 11, color: t.textMuted }}>@{userItem.username}</div>
-                                        </div>
+                                    ))}
+                                    {searchResults.length === 0 && (
+                                        <div style={{ textAlign: "center", padding: 20, color: t.textMuted, fontSize: 12 }}>No matching nodes.</div>
+                                    )}
+                                </>
+                            ) : convoTab === "groups" ? (
+                                <>
+                                    <div className="ht-section-label" style={{ color: t.textMuted, display: "flex", alignItems: "center", justifyContent: "space-between", paddingRight: 12 }}>
+                                        <span>Group Chats</span>
+                                        <button
+                                            type="button"
+                                            onClick={() => setIsCreateGroupOpen(true)}
+                                            style={{
+                                                background: "rgba(56, 189, 248, 0.12)",
+                                                border: "1px solid rgba(56, 189, 248, 0.3)",
+                                                color: t.accent,
+                                                borderRadius: "8px",
+                                                padding: "3px 10px",
+                                                fontSize: "11px",
+                                                fontWeight: "800",
+                                                cursor: "pointer",
+                                                display: "flex",
+                                                alignItems: "center",
+                                                gap: "4px",
+                                                transition: "all 0.2s ease"
+                                            }}
+                                            title="Create New Group Chat"
+                                        >
+                                            <span>+ Group</span>
+                                        </button>
                                     </div>
-                                ))}
-                                {searchResults.length === 0 && (
-                                    <div style={{ textAlign: "center", padding: 20, color: t.textMuted, fontSize: 12 }}>No matching nodes.</div>
-                                )}
-                            </>
-                        ) : convoTab === "groups" ? (
-                            <>
-                                <div className="ht-section-label" style={{ color: t.textMuted, display: "flex", alignItems: "center", justifyContent: "space-between", paddingRight: 12 }}>
-                                    <span>Group Chats</span>
-                                    <button
-                                        type="button"
-                                        onClick={() => setIsCreateGroupOpen(true)}
-                                        style={{
-                                            background: "rgba(56, 189, 248, 0.12)",
-                                            border: "1px solid rgba(56, 189, 248, 0.3)",
-                                            color: t.accent,
-                                            borderRadius: "8px",
-                                            padding: "3px 10px",
-                                            fontSize: "11px",
-                                            fontWeight: "800",
-                                            cursor: "pointer",
-                                            display: "flex",
-                                            alignItems: "center",
-                                            gap: "4px",
-                                            transition: "all 0.2s ease"
-                                        }}
-                                        title="Create New Group Chat"
-                                    >
-                                        <span>+ Group</span>
-                                    </button>
-                                </div>
                                     {conversations.filter(c => c.type === "group").map(c => {
                                         const isActive = activeConv && activeConv.id === c.id;
                                         return (
@@ -1936,7 +2058,7 @@ export default function ChatDashboard({ user, onLogout }) {
                             ) : (
                                 <>
                                     {/* All Direct Messages & Group Messages */}
-                                    <div className="ht-section-label" style={{ color: t.textMuted }}>All Messages</div>
+                                    <div className="ht-section-label" style={{ color: theme === "dark" ? "#38bdf8" : "#082a3bff", paddingLeft: 15, marginBottom: 6, display: "flex", alignItems: "center", gap: 5 }}>All Messages</div>
                                     {conversations.map(c => {
                                         const isActive = activeConv && activeConv.id === c.id;
                                         const isSaved = c.id === "virtual-saved-messages" || (c.type === "direct" && !c.other_participant);
@@ -2447,7 +2569,7 @@ export default function ChatDashboard({ user, onLogout }) {
                                     }}>
                                         {getActiveTypingLabel() ||
                                             (activeConv.type === "group"
-                                                ? `${activeConv.participants?.length || 0} members (click for participants)`
+                                                ? `${activeConv.participants?.length || 0} members`
                                                 : (!activeConv.other_participant
                                                     ? "personal cloud storage"
                                                     : (activeConv.other_participant.status === "online"
@@ -2935,7 +3057,7 @@ export default function ChatDashboard({ user, onLogout }) {
                                     {pinnedMessageIdMap[activeConv?.id] === (contextMenu.message.id || contextMenu.message.message_id) ? "Unpin Message" : "Pin Message"}
                                 </button>
 
-                                 {contextMenu.message.content && (
+                                {contextMenu.message.content && (
                                     <button
                                         type="button"
                                         onClick={() => handleCopyMsgText(contextMenu.message)}
@@ -3209,10 +3331,10 @@ export default function ChatDashboard({ user, onLogout }) {
                                             <path strokeLinecap="round" strokeLinejoin="round" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                                         </svg>
                                         {showEmojiPicker && (
-                                            <div style={{ 
-                                                position: "absolute", 
-                                                bottom: "calc(100% + 22px)", 
-                                                right: 0, 
+                                            <div style={{
+                                                position: "absolute",
+                                                bottom: "calc(100% + 22px)",
+                                                right: 0,
                                                 zIndex: 100,
                                                 // Override emoji picker CSS vars to exactly match our theme colors
                                                 "--epr-bg-color": t.cardBg,
@@ -3636,7 +3758,7 @@ export default function ChatDashboard({ user, onLogout }) {
                                                     {isCreator ? (
                                                         <span style={{ fontSize: 9, fontWeight: 800, background: "rgba(168, 85, 247, 0.2)", color: "#c084fc", padding: "2px 6px", borderRadius: 6 }}>CREATOR</span>
                                                     ) : isAdmin ? (
-                                                        <span style={{ fontSize: 9, fontWeight: 800, background: "rgba(56, 189, 248, 0.2)", color: t.accent, padding: "2px 6px", borderRadius: 6 }}>ADMIN</span>
+                                                        <span style={{ fontSize: 9, fontWeight: 800, background: "rgba(56, 189, 248, 0.2)", color: theme === "dark" ? "#38bdf8" : t.accent, padding: "2px 6px", borderRadius: 6 }}>ADMIN</span>
                                                     ) : (
                                                         <span style={{ fontSize: 9, fontWeight: 700, color: t.textMuted }}>MEMBER</span>
                                                     )}
@@ -4190,7 +4312,7 @@ export default function ChatDashboard({ user, onLogout }) {
                         @{participantContextMenu.participant.username}
                     </div>
 
-                    {!( (participantContextMenu.participant.user_id || participantContextMenu.participant.id) === user.userId ) && (
+                    {!((participantContextMenu.participant.user_id || participantContextMenu.participant.id) === user.userId) && (
                         <button
                             type="button"
                             onClick={() => {
@@ -4224,35 +4346,36 @@ export default function ChatDashboard({ user, onLogout }) {
                     )}
 
                     {isUserGroupAdmin(activeConv, user.userId) &&
-                        !( (participantContextMenu.participant.user_id || participantContextMenu.participant.id) === user.userId ) &&
-                        !( (participantContextMenu.participant.user_id || participantContextMenu.participant.id) === activeConv.creator_id ) &&
-                        !( (groupAdminsMap[activeConv.id] || []).includes(participantContextMenu.participant.user_id || participantContextMenu.participant.id) ) && (
-                        <button
-                            type="button"
-                            onClick={() => {
-                                handleMakeAdmin(activeConv.id, participantContextMenu.participant.user_id || participantContextMenu.participant.id);
-                                setParticipantContextMenu(null);
-                            }}
-                            style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 8,
-                                width: "100%",
-                                padding: "8px 10px",
-                                background: "rgba(56, 189, 248, 0.12)",
-                                border: "none",
-                                color: t.accent,
-                                fontSize: 12,
-                                fontWeight: 800,
-                                borderRadius: 8,
-                                cursor: "pointer",
-                                textAlign: "left"
-                            }}
-                        >
-                            <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
-                            Make Admin
-                        </button>
-                    )}
+                        !((participantContextMenu.participant.user_id || participantContextMenu.participant.id) === user.userId) &&
+                        !((participantContextMenu.participant.user_id || participantContextMenu.participant.id) === activeConv.creator_id) && (
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    const pId = participantContextMenu.participant.user_id || participantContextMenu.participant.id;
+                                    const currentlyAdmin = (participantContextMenu.participant.role === "admin" || (groupAdminsMap[activeConv.id] || []).includes(pId));
+                                    handleMakeAdmin(activeConv.id, pId, !currentlyAdmin);
+                                    setParticipantContextMenu(null);
+                                }}
+                                style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 8,
+                                    width: "100%",
+                                    padding: "8px 10px",
+                                    background: "rgba(56, 189, 248, 0.12)",
+                                    border: "none",
+                                    color: theme === "dark" ? "#38bdf8" : t.accent,
+                                    fontSize: 12,
+                                    fontWeight: 800,
+                                    borderRadius: 8,
+                                    cursor: "pointer",
+                                    textAlign: "left"
+                                }}
+                            >
+                                <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+                                {(participantContextMenu.participant.role === "admin" || (groupAdminsMap[activeConv.id] || []).includes(participantContextMenu.participant.user_id || participantContextMenu.participant.id)) ? "Dismiss as Admin" : "Make Admin"}
+                            </button>
+                        )}
 
                     <button
                         type="button"
