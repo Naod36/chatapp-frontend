@@ -180,12 +180,44 @@ export default function ChatDashboard({ user, onLogout }) {
     const [mutedConvIds, setMutedConvIds] = useState(() => {
         try {
             const saved = localStorage.getItem("muted_conversations");
-            return saved ? JSON.parse(saved) : {};
+            return saved ? JSON.parse(saved) : [];
         } catch (e) {
-            return {};
+            return [];
         }
     });
+    const [pinnedConvIds, setPinnedConvIds] = useState(() => {
+        try {
+            const saved = localStorage.getItem("chat_pinned_conv_ids");
+            return saved ? JSON.parse(saved) : ["virtual-saved-messages"];
+        } catch (e) {
+            return ["virtual-saved-messages"];
+        }
+    });
+    const [isHeaderMenuOpen, setIsHeaderMenuOpen] = useState(false);
     const [viewingParticipantProfile, setViewingParticipantProfile] = useState(null);
+
+    const togglePinConversation = (convId) => {
+        setPinnedConvIds(prev => {
+            const isPinned = prev.includes(convId);
+            const updated = isPinned ? prev.filter(id => id !== convId) : [...prev, convId];
+            localStorage.setItem("chat_pinned_conv_ids", JSON.stringify(updated));
+            return updated;
+        });
+    };
+
+    const toggleMuteConversation = (convId) => {
+        setMutedConvIds(prev => {
+            const isMuted = Array.isArray(prev) ? prev.includes(convId) : !!prev?.[convId];
+            let updated;
+            if (Array.isArray(prev)) {
+                updated = isMuted ? prev.filter(id => id !== convId) : [...prev, convId];
+            } else {
+                updated = [convId];
+            }
+            localStorage.setItem("muted_conversations", JSON.stringify(updated));
+            return updated;
+        });
+    };
 
     // Group Creation Modal states
     const [isCreateGroupOpen, setIsCreateGroupOpen] = useState(false);
@@ -275,15 +307,6 @@ export default function ChatDashboard({ user, onLogout }) {
         } finally {
             setIsCreatingGroup(false);
         }
-    };
-
-    const toggleMuteConversation = (convId) => {
-        if (!convId) return;
-        setMutedConvIds(prev => {
-            const next = { ...prev, [convId]: !prev[convId] };
-            localStorage.setItem("muted_conversations", JSON.stringify(next));
-            return next;
-        });
     };
 
     const safeSendWs = (payload) => {
@@ -1450,8 +1473,96 @@ export default function ChatDashboard({ user, onLogout }) {
                                         className="ht-search-pill"
                                         style={{ background: t.inputBg, border: t.inputBorder, color: t.text }}
                                     />
-                                </div>
+                                                          </div>
                             </div>
+
+                            {/* Pinned Conversations Section (Rendered ABOVE Category Tabs) */}
+                            {!searchQuery.trim() && (() => {
+                                const isPinnedConv = (c) => pinnedConvIds.includes(c.id) || (pinnedConvIds.includes("virtual-saved-messages") && (c.id === "virtual-saved-messages" || (c.type === "direct" && !c.other_participant)));
+                                const pinnedList = conversations.filter(isPinnedConv);
+                                if (pinnedList.length === 0) return null;
+
+                                return (
+                                    <div style={{ padding: "8px 16px 4px", borderBottom: t.border }}>
+                                        <div className="ht-section-label" style={{ color: t.accent, paddingLeft: 0, marginBottom: 6, display: "flex", alignItems: "center", gap: 5 }}>
+                                            <svg width="12" height="12" fill="currentColor" viewBox="0 0 24 24">
+                                                <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+                                            </svg>
+                                            <span>Pinned Conversations</span>
+                                        </div>
+                                        {pinnedList.map(c => {
+                                            const isActive = activeConv && activeConv.id === c.id;
+                                            const isSaved = c.id === "virtual-saved-messages" || (c.type === "direct" && !c.other_participant);
+                                            const isGroup = c.type === "group";
+                                            const isOnline = !isGroup && !isSaved && c.other_participant?.status === "online";
+
+                                            return (
+                                                <div
+                                                    key={c.id}
+                                                    onClick={() => handleSelectConversation(c)}
+                                                    style={{
+                                                        display: "flex",
+                                                        alignItems: "center",
+                                                        gap: 12,
+                                                        padding: "10px 12px",
+                                                        borderRadius: 14,
+                                                        cursor: "pointer",
+                                                        background: isActive ? "rgba(56, 189, 248, 0.12)" : "rgba(120, 120, 120, 0.05)",
+                                                        marginBottom: 4,
+                                                        border: isActive ? `1px solid ${t.accent}` : "1px solid transparent",
+                                                        transition: "all 0.2s ease"
+                                                    }}
+                                                >
+                                                    <div style={{
+                                                        width: 38,
+                                                        height: 38,
+                                                        borderRadius: "50%",
+                                                        background: isSaved
+                                                            ? "linear-gradient(135deg, #de4977, #c93b66)"
+                                                            : (isGroup ? "linear-gradient(135deg, #6366f1, #4f46e5)" : "#4f46e5"),
+                                                        display: "flex",
+                                                        alignItems: "center",
+                                                        justifyContent: "center",
+                                                        color: "white",
+                                                        fontWeight: "800",
+                                                        flexShrink: 0,
+                                                        position: "relative"
+                                                    }}>
+                                                        {isSaved ? (
+                                                            <svg width="18" height="18" fill="currentColor" viewBox="0 0 24 24">
+                                                                <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+                                                            </svg>
+                                                        ) : c.avatar_url ? (
+                                                            <img src={c.avatar_url} alt="" style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} />
+                                                        ) : (
+                                                            c.display_name?.[0]?.toUpperCase() || (isGroup ? "G" : "@")
+                                                        )}
+                                                        {isOnline && (
+                                                            <div style={{ position: "absolute", bottom: 0, right: 0, width: 9, height: 9, borderRadius: "50%", background: "#34A853", border: `2px solid ${t.sidebarBg}` }} />
+                                                        )}
+                                                    </div>
+                                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                                            <div style={{ display: "flex", alignItems: "center", gap: 5, minWidth: 0 }}>
+                                                                <span style={{ fontSize: 13, fontWeight: "750", color: t.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                                                    {isSaved ? "Saved Messages" : c.display_name}
+                                                                </span>
+                                                                {isGroup && <span style={{ background: "rgba(99, 102, 241, 0.2)", color: "#818cf8", fontSize: 9, padding: "1px 4px", borderRadius: 4, fontWeight: 700, flexShrink: 0 }}>GROUP</span>}
+                                                            </div>
+                                                            <span style={{ fontSize: 9.5, color: c.unread_count > 0 ? t.accent : t.textMuted, fontWeight: c.unread_count > 0 ? "700" : "normal" }}>
+                                                                {isSaved ? "" : formatTime(c.last_message_time)}
+                                                            </span>
+                                                        </div>
+                                                        <p style={{ margin: 0, fontSize: 11, color: t.textMuted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                                            {isSaved ? "Personal notes cloud inbox" : (c.last_message_content || (isGroup ? `${c.participants?.length || 0} members` : "No messages yet"))}
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                );
+                            })()}
 
                             {/* Category Filter Tabs (All Messages / Groups) */}
                             <div style={{ display: "flex", gap: 6, padding: "8px 16px", borderBottom: t.border }}>
@@ -1544,7 +1655,7 @@ export default function ChatDashboard({ user, onLogout }) {
                             ) : convoTab === "groups" ? (
                                 <>
                                     <div className="ht-section-label" style={{ color: t.textMuted }}>Group Chats</div>
-                                    {conversations.filter(c => c.type === "group").map(c => {
+                                    {conversations.filter(c => c.type === "group" && !pinnedConvIds.includes(c.id)).map(c => {
                                         const isActive = activeConv && activeConv.id === c.id;
                                         return (
                                             <div
@@ -1594,55 +1705,24 @@ export default function ChatDashboard({ user, onLogout }) {
                                             </div>
                                         );
                                     })}
-                                    {conversations.filter(c => c.type === "group").length === 0 && (
-                                        <div style={{ textAlign: "center", padding: "30px 10px", color: t.textMuted, fontSize: 12 }}>No group chats created yet. Click "+ Group" to start one!</div>
+                                    {conversations.filter(c => c.type === "group" && !pinnedConvIds.includes(c.id)).length === 0 && (
+                                        <div style={{ textAlign: "center", padding: "30px 10px", color: t.textMuted, fontSize: 12 }}>No unpinned group chats.</div>
                                     )}
                                 </>
                             ) : (
                                 <>
-                                    {/* Saved cloud message row at top */}
-                                    <div className="ht-section-label" style={{ color: t.accent }}>Pinned Message</div>
-                                    {conversations.filter(c => c.id === "virtual-saved-messages" || (c.type === "direct" && !c.other_participant)).map(c => {
+                                    {/* All remaining unpinned Direct Messages & Group Messages */}
+                                    <div className="ht-section-label" style={{ color: t.textMuted }}>All Messages</div>
+                                    {conversations.filter(c => {
+                                        const isSaved = c.id === "virtual-saved-messages" || (c.type === "direct" && !c.other_participant);
+                                        const isPinned = pinnedConvIds.includes(c.id) || (isSaved && pinnedConvIds.includes("virtual-saved-messages"));
+                                        return !isPinned;
+                                    }).map(c => {
                                         const isActive = activeConv && activeConv.id === c.id;
-                                        return (
-                                            <div
-                                                key={c.id}
-                                                onClick={() => handleSelectConversation(c)}
-                                                style={{
-                                                    display: "flex",
-                                                    alignItems: "center",
-                                                    gap: 12,
-                                                    padding: "12px 14px",
-                                                    borderRadius: 14,
-                                                    cursor: "pointer",
-                                                    background: isActive ? "rgba(120, 120, 120, 0.09)" : "transparent",
-                                                    marginBottom: 4,
-                                                    border: isActive ? `1px solid ${t.accent}` : "1px solid transparent"
-                                                }}
-                                            >
-                                                <div style={{ width: 40, height: 40, borderRadius: "50%", background: "linear-gradient(135deg, #de4977, #c93b66)", display: "flex", alignItems: "center", justifyContent: "center", color: "white", flexShrink: 0, position: "relative" }}>
-                                                    <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24" style={{ margin: "auto" }}>
-                                                        <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
-                                                    </svg>
-                                                </div>
-                                                <div style={{ flex: 1, minWidth: 0 }}>
-                                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                                                        <span style={{ fontSize: 13, fontWeight: "755", color: t.text }}>Saved Messages</span>
-                                                    </div>
-                                                    <p style={{ margin: 0, fontSize: 11.5, color: t.textMuted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                                                        Personal notes cloud inbox
-                                                    </p>
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-
-                                    {/* All remaining active Direct Messages & Group Messages */}
-                                    <div className="ht-section-label" style={{ color: t.textMuted }}>All Message</div>
-                                    {conversations.filter(c => c.id !== "virtual-saved-messages" && !(c.type === "direct" && !c.other_participant)).map(c => {
-                                        const isActive = activeConv && activeConv.id === c.id;
+                                        const isSaved = c.id === "virtual-saved-messages" || (c.type === "direct" && !c.other_participant);
                                         const isGroup = c.type === "group";
-                                        const isOnline = !isGroup && c.other_participant?.status === "online";
+                                        const isOnline = !isGroup && !isSaved && c.other_participant?.status === "online";
+
                                         return (
                                             <div
                                                 key={c.id}
@@ -1659,8 +1739,26 @@ export default function ChatDashboard({ user, onLogout }) {
                                                     border: isActive ? `1px solid rgba(120, 120, 120, 0.15)` : "1px solid transparent"
                                                 }}
                                             >
-                                                <div style={{ width: 40, height: 40, borderRadius: "50%", background: isGroup ? "linear-gradient(135deg, #6366f1, #4f46e5)" : "#4f46e5", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontWeight: "800", flexShrink: 0, position: "relative" }}>
-                                                    {c.avatar_url ? (
+                                                <div style={{
+                                                    width: 40,
+                                                    height: 40,
+                                                    borderRadius: "50%",
+                                                    background: isSaved
+                                                        ? "linear-gradient(135deg, #de4977, #c93b66)"
+                                                        : (isGroup ? "linear-gradient(135deg, #6366f1, #4f46e5)" : "#4f46e5"),
+                                                    display: "flex",
+                                                    alignItems: "center",
+                                                    justifyContent: "center",
+                                                    color: "white",
+                                                    fontWeight: "800",
+                                                    flexShrink: 0,
+                                                    position: "relative"
+                                                }}>
+                                                    {isSaved ? (
+                                                        <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24">
+                                                            <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+                                                        </svg>
+                                                    ) : c.avatar_url ? (
                                                         <img src={c.avatar_url} alt="" style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} />
                                                     ) : (
                                                         c.display_name?.[0]?.toUpperCase() || (isGroup ? "G" : "@")
@@ -1672,16 +1770,20 @@ export default function ChatDashboard({ user, onLogout }) {
                                                 <div style={{ flex: 1, minWidth: 0 }}>
                                                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                                                         <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-                                                            <span style={{ fontSize: 13, fontWeight: "755", color: t.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.display_name}</span>
+                                                            <span style={{ fontSize: 13, fontWeight: "755", color: t.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                                                {isSaved ? "Saved Messages" : c.display_name}
+                                                            </span>
                                                             {isGroup && <span style={{ background: "rgba(99, 102, 241, 0.2)", color: "#818cf8", fontSize: 9.5, padding: "1px 5px", borderRadius: 4, fontWeight: 700, flexShrink: 0 }}>GROUP</span>}
                                                         </div>
-                                                        <span style={{ fontSize: 9.5, color: c.unread_count > 0 ? t.accent : t.textMuted, fontWeight: c.unread_count > 0 ? "700" : "normal" }}>{formatTime(c.last_message_time)}</span>
+                                                        <span style={{ fontSize: 9.5, color: c.unread_count > 0 ? t.accent : t.textMuted, fontWeight: c.unread_count > 0 ? "700" : "normal" }}>
+                                                            {isSaved ? "" : formatTime(c.last_message_time)}
+                                                        </span>
                                                     </div>
                                                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 2 }}>
                                                         <p style={{ margin: 0, fontSize: 11.5, color: c.unread_count > 0 ? t.text : t.textMuted, fontWeight: c.unread_count > 0 ? "600" : "normal", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "flex", alignItems: "center", gap: 4, flex: 1 }}>
                                                             {c.last_message && c.last_message.sender_id === user.userId && renderMessageStatus(c.last_message.status, true)}
                                                             <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
-                                                                {c.last_message_content || (isGroup ? `${c.participants?.length || 0} members` : "No messages yet")}
+                                                                {isSaved ? "Personal notes cloud inbox" : (c.last_message_content || (isGroup ? `${c.participants?.length || 0} members` : "No messages yet"))}
                                                             </span>
                                                         </p>
                                                         {c.unread_count > 0 && (
@@ -1694,8 +1796,12 @@ export default function ChatDashboard({ user, onLogout }) {
                                             </div>
                                         );
                                     })}
-                                    {conversations.filter(c => c.id !== "virtual-saved-messages" && !(c.type === "direct" && !c.other_participant)).length === 0 && (
-                                        <div style={{ textAlign: "center", padding: "30px 10px", color: t.textMuted, fontSize: 11 }}>No message nodes in current cluster.</div>
+                                    {conversations.filter(c => {
+                                        const isSaved = c.id === "virtual-saved-messages" || (c.type === "direct" && !c.other_participant);
+                                        const isPinned = pinnedConvIds.includes(c.id) || (isSaved && pinnedConvIds.includes("virtual-saved-messages"));
+                                        return !isPinned;
+                                    }).length === 0 && (
+                                        <div style={{ textAlign: "center", padding: "30px 10px", color: t.textMuted, fontSize: 11 }}>No unpinned messages.</div>
                                     )}
                                 </>
                             )}
@@ -2106,7 +2212,7 @@ export default function ChatDashboard({ user, onLogout }) {
                                 </div>
                             )}
 
-                            <div className="ht-header-actions" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <div className="ht-header-actions" style={{ display: "flex", alignItems: "center", gap: 8, position: "relative" }}>
                                 {!isInChatSearchOpen && (
                                     <button
                                         className="ht-action-circle-btn"
@@ -2123,6 +2229,97 @@ export default function ChatDashboard({ user, onLogout }) {
                                         </svg>
                                     </button>
                                 )}
+
+                                {/* Conversation Options Dropdown (Pin / Mute) */}
+                                <div style={{ position: "relative" }}>
+                                    <button
+                                        className="ht-action-circle-btn"
+                                        style={{ color: isHeaderMenuOpen ? t.accent : t.text }}
+                                        onClick={() => setIsHeaderMenuOpen(prev => !prev)}
+                                        title="Conversation Options"
+                                    >
+                                        <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
+                                        </svg>
+                                    </button>
+
+                                    {isHeaderMenuOpen && (
+                                        <div style={{
+                                            position: "absolute",
+                                            top: 40,
+                                            right: 0,
+                                            width: 190,
+                                            background: t.cardBg,
+                                            border: t.border,
+                                            borderRadius: 14,
+                                            boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
+                                            zIndex: 100,
+                                            padding: 6,
+                                            backdropFilter: "blur(12px)"
+                                        }}>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    togglePinConversation(activeConv.id);
+                                                    setIsHeaderMenuOpen(false);
+                                                }}
+                                                style={{
+                                                    width: "100%",
+                                                    display: "flex",
+                                                    alignItems: "center",
+                                                    gap: 10,
+                                                    padding: "10px 12px",
+                                                    background: "none",
+                                                    border: "none",
+                                                    color: t.text,
+                                                    fontSize: 12.5,
+                                                    fontWeight: 700,
+                                                    borderRadius: 10,
+                                                    cursor: "pointer",
+                                                    textAlign: "left"
+                                                }}
+                                                onMouseEnter={(e) => e.currentTarget.style.background = "rgba(120, 120, 120, 0.1)"}
+                                                onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                                            >
+                                                <svg width="15" height="15" fill="currentColor" viewBox="0 0 24 24" style={{ color: t.accent }}>
+                                                    <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+                                                </svg>
+                                                <span>{pinnedConvIds.includes(activeConv.id) ? "Unpin Chat" : "Pin Chat"}</span>
+                                            </button>
+
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    toggleMuteConversation(activeConv.id);
+                                                    setIsHeaderMenuOpen(false);
+                                                }}
+                                                style={{
+                                                    width: "100%",
+                                                    display: "flex",
+                                                    alignItems: "center",
+                                                    gap: 10,
+                                                    padding: "10px 12px",
+                                                    background: "none",
+                                                    border: "none",
+                                                    color: t.text,
+                                                    fontSize: 12.5,
+                                                    fontWeight: 700,
+                                                    borderRadius: 10,
+                                                    cursor: "pointer",
+                                                    textAlign: "left"
+                                                }}
+                                                onMouseEnter={(e) => e.currentTarget.style.background = "rgba(120, 120, 120, 0.1)"}
+                                                onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                                            >
+                                                <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" style={{ color: (Array.isArray(mutedConvIds) ? mutedConvIds.includes(activeConv.id) : mutedConvIds?.[activeConv.id]) ? "#ef4444" : t.textMuted }}>
+                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                                                </svg>
+                                                <span>{(Array.isArray(mutedConvIds) ? mutedConvIds.includes(activeConv.id) : mutedConvIds?.[activeConv.id]) ? "Unmute Notifications" : "Mute Notifications"}</span>
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+
                                 <button
                                     className="ht-action-circle-btn"
                                     style={{ color: showInspector ? t.accent : t.text }}
