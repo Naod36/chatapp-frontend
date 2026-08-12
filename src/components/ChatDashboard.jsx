@@ -2706,7 +2706,8 @@ export default function ChatDashboard({ user, onLogout }) {
                             const pinnedMsg = messages.find(m => (m.id || m.message_id) === pinnedMsgId);
                             if (!pinnedMsg) return null;
                             const isSelf = pinnedMsg.sender_id === user.userId;
-                            const senderTitle = isSelf ? "You" : (activeConv.display_name || "Participant");
+                            const senderPart = (activeConv?.participants || []).find(p => (p.user_id || p.id) === pinnedMsg.sender_id);
+                            const senderTitle = isSelf ? "You" : (pinnedMsg.sender_name || senderPart?.display_name || senderPart?.username || activeConv.display_name || "Participant");
                             return (
                                 <div
                                     style={{
@@ -2783,11 +2784,16 @@ export default function ChatDashboard({ user, onLogout }) {
                                                     user?.username?.[0]?.toUpperCase() || "U"
                                                 )
                                             ) : (
-                                                m.sender_avatar ? (
-                                                    <img src={m.sender_avatar} alt="" style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} />
-                                                ) : (
-                                                    (m.sender_name?.[0] || activeConv.display_name?.[0])?.toUpperCase() || "@"
-                                                )
+                                                (() => {
+                                                    const senderPart = (activeConv?.participants || []).find(p => (p.user_id || p.id) === m.sender_id);
+                                                    const avatarUrl = m.sender_avatar || senderPart?.avatar_url;
+                                                    const nameForInitial = m.sender_name || senderPart?.display_name || senderPart?.username || activeConv?.display_name || "P";
+                                                    return avatarUrl ? (
+                                                        <img src={avatarUrl} alt="" style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} />
+                                                    ) : (
+                                                        nameForInitial[0]?.toUpperCase() || "@"
+                                                    );
+                                                })()
                                             )}
                                         </div>
                                         <div className="ht-msg-bubble-box" style={{ position: "relative" }}>
@@ -2813,7 +2819,10 @@ export default function ChatDashboard({ user, onLogout }) {
                                                         marginBottom: "4px",
                                                         letterSpacing: "0.2px"
                                                     }}>
-                                                        {m.sender_name || "Participant"}
+                                                        {(() => {
+                                                            const senderPart = (activeConv?.participants || []).find(p => (p.user_id || p.id) === m.sender_id);
+                                                            return m.sender_name || senderPart?.display_name || senderPart?.username || "Participant";
+                                                        })()}
                                                     </div>
                                                 )}
                                                 {m.reply_to_id && (
@@ -2933,6 +2942,41 @@ export default function ChatDashboard({ user, onLogout }) {
                                     </div>
                                 );
                             })}
+
+                            {/* Animated Typing Indicator Bubble */}
+                            {getActiveTypingLabel() && (
+                                <div className="ht-msg-row recv" style={{ position: "relative", marginBottom: 12, marginTop: 4 }}>
+                                    <div className="ht-msg-avatar" style={{ background: "linear-gradient(135deg, #6366f1, #38bdf8)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 800, fontSize: 11 }}>
+                                        💬
+                                    </div>
+                                    <div className="ht-msg-bubble-box">
+                                        <div
+                                            className="ht-msg-bubble"
+                                            style={{
+                                                background: t.bubbleRecv,
+                                                color: t.bubbleRecvText,
+                                                padding: "8px 14px",
+                                                borderRadius: "18px",
+                                                borderTopLeftRadius: "4px",
+                                                display: "inline-flex",
+                                                alignItems: "center",
+                                                gap: 8,
+                                                boxShadow: "0 2px 8px rgba(0,0,0,0.08)"
+                                            }}
+                                        >
+                                            <span style={{ fontSize: 12, fontWeight: 700, color: theme === "dark" ? "#38bdf8" : t.accent }}>
+                                                {getActiveTypingLabel()}
+                                            </span>
+                                            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                                                <span style={{ width: 6, height: 6, borderRadius: "50%", background: theme === "dark" ? "#38bdf8" : t.accent, animation: "typingBounce 1.4s infinite ease-in-out both", animationDelay: "0s" }} />
+                                                <span style={{ width: 6, height: 6, borderRadius: "50%", background: theme === "dark" ? "#38bdf8" : t.accent, animation: "typingBounce 1.4s infinite ease-in-out both", animationDelay: "0.2s" }} />
+                                                <span style={{ width: 6, height: 6, borderRadius: "50%", background: theme === "dark" ? "#38bdf8" : t.accent, animation: "typingBounce 1.4s infinite ease-in-out both", animationDelay: "0.4s" }} />
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
                             <div ref={messageEndRef} />
                         </div>
 
