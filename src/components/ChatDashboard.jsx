@@ -363,8 +363,45 @@ export default function ChatDashboard({ user, onLogout }) {
             const res = await conversationService.uploadFile(file, (loaded, total, pct) => {
                 setUploadProgress({ loadedFormatted: (loaded / 1024 / 1024).toFixed(1) + " MB", totalFormatted: (total / 1024 / 1024).toFixed(1) + " MB", percentage: pct });
             });
-            if (res.media_url) {
-                setEditGroupAvatarUrl(res.media_url);
+            const uploadedUrl = res?.url || res?.media_url;
+            if (uploadedUrl && activeConv) {
+                setEditGroupAvatarUrl(uploadedUrl);
+
+                // 1. Send WebSocket update action for instant real-time sync across connected clients
+                if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+                    socketRef.current.send(JSON.stringify({
+                        action: "update_group",
+                        conversation_id: activeConv.id,
+                        title: editGroupTitle.trim() || activeConv.title || activeConv.display_name,
+                        avatar_url: uploadedUrl
+                    }));
+                }
+
+                // 2. Update local state immediately
+                setActiveConv(prev => prev ? {
+                    ...prev,
+                    avatar_url: uploadedUrl
+                } : null);
+
+                setConversations(prev => prev.map(c => {
+                    if (c.id === activeConv.id) {
+                        return {
+                            ...c,
+                            avatar_url: uploadedUrl
+                        };
+                    }
+                    return c;
+                }));
+
+                // 3. REST API update call with fallback
+                try {
+                    await conversationService.updateGroup(activeConv.id, {
+                        title: editGroupTitle.trim() || activeConv.title || activeConv.display_name,
+                        avatar_url: uploadedUrl
+                    });
+                } catch (apiErr) {
+                    console.warn("REST endpoint error on avatar upload, fallback via WS/state:", apiErr);
+                }
             }
         } catch (err) {
             showError(err.message || "Failed to upload group avatar");
@@ -2233,7 +2270,7 @@ export default function ChatDashboard({ user, onLogout }) {
                                             >
                                                 <div style={{ width: 40, height: 40, borderRadius: "50%", background: "linear-gradient(135deg, #6366f1, #4f46e5)", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontWeight: "800", flexShrink: 0, position: "relative" }}>
                                                     {c.avatar_url ? (
-                                                        <img src={c.avatar_url} alt="" style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} />
+                                                        <img src={getAssetUrl(c.avatar_url)} alt="" style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} />
                                                     ) : (
                                                         c.display_name?.[0]?.toUpperCase() || "G"
                                                     )}
@@ -2313,7 +2350,7 @@ export default function ChatDashboard({ user, onLogout }) {
                                                             <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
                                                         </svg>
                                                     ) : c.avatar_url ? (
-                                                        <img src={c.avatar_url} alt="" style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} />
+                                                        <img src={getAssetUrl(c.avatar_url)} alt="" style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} />
                                                     ) : (
                                                         c.display_name?.[0]?.toUpperCase() || (isGroup ? "G" : "@")
                                                     )}
@@ -4434,7 +4471,7 @@ export default function ChatDashboard({ user, onLogout }) {
                                     border: `3px solid ${t.accent}`
                                 }}>
                                     {editGroupAvatarUrl ? (
-                                        <img src={editGroupAvatarUrl} alt="Group Avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                                        <img src={getAssetUrl(editGroupAvatarUrl)} alt="Group Avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                                     ) : (
                                         (activeConv.title || activeConv.display_name)?.[0]?.toUpperCase() || "G"
                                     )}
