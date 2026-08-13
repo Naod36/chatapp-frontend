@@ -143,7 +143,7 @@ export default function ChatDashboard({ user, onLogout }) {
     // UI redesign states
     const [activeRailTab, setActiveRailTab] = useState("chats"); // "chats" | "profile" | "settings"
     const [convoTab, setConvoTab] = useState("all"); // "all" | "groups"
-    const [showInspector, setShowInspector] = useState(true);
+    const [showInspector, setShowInspector] = useState(false);
     const [myProfile, setMyProfile] = useState({ display_name: user?.username || "", bio: "", avatar_url: "" });
     const [selectedFile, setSelectedFile] = useState(null);
     const [isUploading, setIsUploading] = useState(false);
@@ -194,6 +194,21 @@ export default function ChatDashboard({ user, onLogout }) {
         }
     });
     const [isHeaderMenuOpen, setIsHeaderMenuOpen] = useState(false);
+    const headerMenuRef = useRef(null);
+
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (headerMenuRef.current && !headerMenuRef.current.contains(event.target)) {
+                setIsHeaderMenuOpen(false);
+            }
+        };
+        if (isHeaderMenuOpen) {
+            document.addEventListener("mousedown", handleClickOutside);
+        }
+        return () => {
+            document.removeEventListener("mousedown", handleClickOutside);
+        };
+    }, [isHeaderMenuOpen]);
     const [viewingParticipantProfile, setViewingParticipantProfile] = useState(null);
     const [isRailExpanded, setIsRailExpanded] = useState(() => {
         const saved = localStorage.getItem("chat_rail_expanded");
@@ -892,7 +907,7 @@ export default function ChatDashboard({ user, onLogout }) {
         fetchMyProfile();
 
         if ("Notification" in window && Notification.permission === "default") {
-            Notification.requestPermission().catch(() => {});
+            Notification.requestPermission().catch(() => { });
         }
     }, []);
 
@@ -925,7 +940,7 @@ export default function ChatDashboard({ user, onLogout }) {
                                     window.focus();
                                     notif.close();
                                 };
-                            } catch (e) {}
+                            } catch (e) { }
                         }
                     }
 
@@ -1276,9 +1291,6 @@ export default function ChatDashboard({ user, onLogout }) {
 
         setActiveConv(conv);
         setMessages([]);
-        if (conv.type === "group") {
-            setShowInspector(true);
-        }
 
         // Clear unread count badge in sidebar
         setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, unread_count: 0 } : c));
@@ -2014,7 +2026,7 @@ export default function ChatDashboard({ user, onLogout }) {
                                     </svg>
                                     <input
                                         type="text"
-                                        placeholder="Search user profile nodes..."
+                                        placeholder="Search user profile..."
                                         value={searchQuery}
                                         onChange={(e) => setSearchQuery(e.target.value)}
                                         className="ht-search-pill"
@@ -2095,7 +2107,26 @@ export default function ChatDashboard({ user, onLogout }) {
                                                                 <span style={{ fontSize: 13, fontWeight: "750", color: t.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                                                                     {isSaved ? "Saved Messages" : c.display_name}
                                                                 </span>
-                                                                {isGroup && <span style={{ background: "rgba(99, 102, 241, 0.2)", color: "#818cf8", fontSize: 9, padding: "1px 4px", borderRadius: 4, fontWeight: 700, flexShrink: 0 }}>GROUP</span>}
+                                                                {isGroup && (
+                                                                    <span
+                                                                        title="Group Chat"
+                                                                        style={{
+                                                                            display: "inline-flex",
+                                                                            alignItems: "center",
+                                                                            justifyContent: "center",
+                                                                            background: "rgba(56,189,248,0.18)",
+                                                                            color: "#38bdf8",
+                                                                            width: 22,
+                                                                            height: 22,
+                                                                            borderRadius: "50%",
+                                                                            flexShrink: 0
+                                                                        }}
+                                                                    >
+                                                                        <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                                                            <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                                                                        </svg>
+                                                                    </span>
+                                                                )}
                                                             </div>
                                                             <span style={{ fontSize: 9.5, color: c.unread_count > 0 ? t.accent : t.textMuted, fontWeight: c.unread_count > 0 ? "700" : "normal", flexShrink: 0, marginLeft: 4 }}>
                                                                 {isSaved ? "" : formatTime(c.last_message_time)}
@@ -2226,17 +2257,17 @@ export default function ChatDashboard({ user, onLogout }) {
                                 </>
                             ) : convoTab === "groups" ? (
                                 <>
-                                    <div className="ht-section-label" style={{ color: t.textMuted, display: "flex", alignItems: "center", justifyContent: "space-between", paddingRight: 12 }}>
-                                        <span>Group Chats</span>
+                                    <div style={{ color: t.textMuted, display: "flex", alignItems: "center", justifyContent: "space-between", paddingRight: 12 }}>
+                                        <span className="ht-section-label" >Group Chats</span>
                                         <button
                                             type="button"
                                             onClick={() => setIsCreateGroupOpen(true)}
                                             style={{
-                                                background: "rgba(56, 189, 248, 0.12)",
-                                                border: "1px solid rgba(56, 189, 248, 0.3)",
-                                                color: t.accent,
+                                                background: theme === "dark" ? "rgba(56, 189, 248, 0.2)" : "rgba(3, 105, 161, 0.12)",
+                                                border: theme === "dark" ? "1px solid rgba(56, 189, 248, 0.5)" : "1px solid rgba(3, 105, 161, 0.3)",
+                                                color: theme === "dark" ? "#38bdf8" : "#0284c7",
                                                 borderRadius: "8px",
-                                                padding: "3px 10px",
+                                                padding: "4px 10px",
                                                 fontSize: "11px",
                                                 fontWeight: "800",
                                                 cursor: "pointer",
@@ -2279,7 +2310,24 @@ export default function ChatDashboard({ user, onLogout }) {
                                                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6, width: "100%" }}>
                                                         <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, flex: 1 }}>
                                                             <span style={{ fontSize: 13, fontWeight: "755", color: t.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.display_name}</span>
-                                                            <span style={{ background: "rgba(99, 102, 241, 0.2)", color: "#818cf8", fontSize: 9.5, padding: "1px 5px", borderRadius: 4, fontWeight: 700, flexShrink: 0 }}>GROUP</span>
+                                                            <span
+                                                                title="Group Chat"
+                                                                style={{
+                                                                    display: "inline-flex",
+                                                                    alignItems: "center",
+                                                                    justifyContent: "center",
+                                                                    background: "rgba(56,189,248,0.18)",
+                                                                    color: "#38bdf8",
+                                                                    width: 22,
+                                                                    height: 22,
+                                                                    borderRadius: "50%",
+                                                                    flexShrink: 0
+                                                                }}
+                                                            >
+                                                                <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                                                                </svg>
+                                                            </span>
                                                         </div>
                                                         <span style={{ fontSize: 9.5, color: c.unread_count > 0 ? t.accent : t.textMuted, fontWeight: c.unread_count > 0 ? "700" : "normal", flexShrink: 0, marginLeft: 4 }}>{formatTime(c.last_message_time)}</span>
                                                     </div>
@@ -2364,7 +2412,26 @@ export default function ChatDashboard({ user, onLogout }) {
                                                             <span style={{ fontSize: 13, fontWeight: "755", color: t.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                                                                 {isSaved ? "Saved Messages" : c.display_name}
                                                             </span>
-                                                            {isGroup && <span style={{ background: "rgba(99, 102, 241, 0.2)", color: "#818cf8", fontSize: 9.5, padding: "1px 5px", borderRadius: 4, fontWeight: 700, flexShrink: 0 }}>GROUP</span>}
+                                                            {isGroup && (
+                                                                <span
+                                                                    title="Group Chat"
+                                                                    style={{
+                                                                        display: "inline-flex",
+                                                                        alignItems: "center",
+                                                                        justifyContent: "center",
+                                                                        background: "rgba(56,189,248,0.18)",
+                                                                        color: "#38bdf8",
+                                                                        width: 22,
+                                                                        height: 22,
+                                                                        borderRadius: "50%",
+                                                                        flexShrink: 0
+                                                                    }}
+                                                                >
+                                                                    <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                                                        <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                                                                    </svg>
+                                                                </span>
+                                                            )}
                                                         </div>
                                                         <span style={{ fontSize: 9.5, color: c.unread_count > 0 ? t.accent : t.textMuted, fontWeight: c.unread_count > 0 ? "700" : "normal", flexShrink: 0, marginLeft: 4 }}>
                                                             {isSaved ? "" : formatTime(c.last_message_time)}
@@ -2931,8 +2998,23 @@ export default function ChatDashboard({ user, onLogout }) {
                                     <h3 style={{ margin: 0, fontSize: 16, color: t.text, fontWeight: 800, display: "flex", alignItems: "center", gap: 6 }}>
                                         {activeConv.display_name}
                                         {activeConv.type === "group" && (
-                                            <span style={{ fontSize: 10, color: t.accent, background: "rgba(56,189,248,0.15)", padding: "1px 6px", borderRadius: 6, fontWeight: 800 }}>
-                                                GROUP
+                                            <span
+                                                title="Group Chat"
+                                                style={{
+                                                    display: "inline-flex",
+                                                    alignItems: "center",
+                                                    justifyContent: "center",
+                                                    background: "rgba(56,189,248,0.18)",
+                                                    color: "#38bdf8",
+                                                    width: 26,
+                                                    height: 26,
+                                                    borderRadius: "50%",
+                                                    flexShrink: 0
+                                                }}
+                                            >
+                                                <svg width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                                                </svg>
                                             </span>
                                         )}
                                     </h3>
@@ -2958,7 +3040,7 @@ export default function ChatDashboard({ user, onLogout }) {
                                 {!isInChatSearchOpen && (
                                     <button
                                         className="ht-action-circle-btn"
-                                        style={{ color: t.text }}
+                                        style={{ color: isInChatSearchOpen ? (theme === "dark" ? "#38bdf8" : "#0284c7") : t.text }}
                                         onClick={() => {
                                             setIsInChatSearchOpen(true);
                                             setInChatSearchQuery("");
@@ -2971,12 +3053,22 @@ export default function ChatDashboard({ user, onLogout }) {
                                         </svg>
                                     </button>
                                 )}
+                                <button
+                                    className="ht-action-circle-btn"
+                                    style={{ color: showInspector ? (theme === "dark" ? "#38bdf8" : "#0284c7") : t.text }}
+                                    onClick={() => setShowInspector(prev => !prev)}
+                                    title="Toggle Conversation Inspector"
+                                >
+                                    <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    </svg>
+                                </button>
 
                                 {/* Conversation Options Dropdown (Pin / Mute / Group Info) */}
-                                <div style={{ position: "relative" }}>
+                                <div ref={headerMenuRef} style={{ position: "relative" }}>
                                     <button
                                         className="ht-action-circle-btn"
-                                        style={{ color: isHeaderMenuOpen ? t.accent : t.text }}
+                                        style={{ color: isHeaderMenuOpen ? (theme === "dark" ? "#38bdf8" : "#0284c7") : t.text }}
                                         onClick={() => setIsHeaderMenuOpen(prev => !prev)}
                                         title="Conversation Options"
                                     >
@@ -2990,10 +3082,10 @@ export default function ChatDashboard({ user, onLogout }) {
                                             position: "absolute",
                                             top: 40,
                                             right: 0,
-                                            width: 190,
+                                            width: 175,
                                             background: t.cardBg,
                                             border: t.border,
-                                            borderRadius: 14,
+                                            borderRadius: 12,
                                             boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
                                             zIndex: 100,
                                             padding: 6,
@@ -3010,27 +3102,21 @@ export default function ChatDashboard({ user, onLogout }) {
                                                     }}
                                                     style={{
                                                         width: "100%",
-                                                        display: "flex",
-                                                        alignItems: "center",
-                                                        gap: 10,
-                                                        padding: "10px 12px",
+                                                        padding: "8px 12px",
                                                         background: "none",
                                                         border: "none",
                                                         color: t.text,
-                                                        fontSize: 12.5,
-                                                        fontWeight: 700,
-                                                        borderRadius: 10,
+                                                        fontSize: 13,
+                                                        fontWeight: 500,
+                                                        borderRadius: 8,
                                                         cursor: "pointer",
                                                         textAlign: "left",
-                                                        marginBottom: 4
+                                                        marginBottom: 2
                                                     }}
                                                     onMouseEnter={(e) => e.currentTarget.style.background = "rgba(120, 120, 120, 0.1)"}
                                                     onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
                                                 >
-                                                    <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" style={{ color: t.accent }}>
-                                                        <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                                    </svg>
-                                                    <span>Group Info & Settings</span>
+                                                    Group Info & Settings
                                                 </button>
                                             )}
                                             <button
@@ -3041,26 +3127,21 @@ export default function ChatDashboard({ user, onLogout }) {
                                                 }}
                                                 style={{
                                                     width: "100%",
-                                                    display: "flex",
-                                                    alignItems: "center",
-                                                    gap: 10,
-                                                    padding: "10px 12px",
+                                                    padding: "8px 12px",
                                                     background: "none",
                                                     border: "none",
                                                     color: t.text,
-                                                    fontSize: 12.5,
-                                                    fontWeight: 700,
-                                                    borderRadius: 10,
+                                                    fontSize: 13,
+                                                    fontWeight: 500,
+                                                    borderRadius: 8,
                                                     cursor: "pointer",
-                                                    textAlign: "left"
+                                                    textAlign: "left",
+                                                    marginBottom: 2
                                                 }}
                                                 onMouseEnter={(e) => e.currentTarget.style.background = "rgba(120, 120, 120, 0.1)"}
                                                 onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
                                             >
-                                                <svg width="15" height="15" fill="currentColor" viewBox="0 0 24 24" style={{ color: t.accent }}>
-                                                    <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
-                                                </svg>
-                                                <span>{isConvPinned(activeConv) ? "Unpin Chat" : "Pin Chat"}</span>
+                                                {isConvPinned(activeConv) ? "Unpin Chat" : "Pin Chat"}
                                             </button>
 
                                             <button
@@ -3071,41 +3152,26 @@ export default function ChatDashboard({ user, onLogout }) {
                                                 }}
                                                 style={{
                                                     width: "100%",
-                                                    display: "flex",
-                                                    alignItems: "center",
-                                                    gap: 10,
-                                                    padding: "10px 12px",
+                                                    padding: "8px 12px",
                                                     background: "none",
                                                     border: "none",
                                                     color: t.text,
-                                                    fontSize: 12.5,
-                                                    fontWeight: 700,
-                                                    borderRadius: 10,
+                                                    fontSize: 13,
+                                                    fontWeight: 500,
+                                                    borderRadius: 8,
                                                     cursor: "pointer",
                                                     textAlign: "left"
                                                 }}
                                                 onMouseEnter={(e) => e.currentTarget.style.background = "rgba(120, 120, 120, 0.1)"}
                                                 onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
                                             >
-                                                <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" style={{ color: (Array.isArray(mutedConvIds) ? mutedConvIds.includes(activeConv.id) : mutedConvIds?.[activeConv.id]) ? "#ef4444" : t.textMuted }}>
-                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-                                                </svg>
-                                                <span>{(Array.isArray(mutedConvIds) ? mutedConvIds.includes(activeConv.id) : mutedConvIds?.[activeConv.id]) ? "Unmute Notifications" : "Mute Notifications"}</span>
+                                                {(Array.isArray(mutedConvIds) ? mutedConvIds.includes(activeConv.id) : mutedConvIds?.[activeConv.id]) ? "Unmute Notifications" : "Mute Notifications"}
                                             </button>
                                         </div>
                                     )}
                                 </div>
 
-                                <button
-                                    className="ht-action-circle-btn"
-                                    style={{ color: showInspector ? t.accent : t.text }}
-                                    onClick={() => setShowInspector(prev => !prev)}
-                                    title="Toggle Conversation Inspector"
-                                >
-                                    <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                    </svg>
-                                </button>
+
                             </div>
                         </div>
 
@@ -4003,7 +4069,7 @@ export default function ChatDashboard({ user, onLogout }) {
                             <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
                         </svg>
                         <h4 style={{ margin: "0 0 8px", fontSize: 16, color: t.text, fontWeight: 750 }}>No Conversation Selected</h4>
-                        <p style={{ margin: 0, fontSize: 13, maxWidth: 280, lineHeight: 1.45 }}>Choose a message thread from the inbox sidebar, or scan profile nodes in the system directory.</p>
+                        <p style={{ margin: 0, fontSize: 13, maxWidth: 280, lineHeight: 1.45 }}>Choose a message thread from the inbox sidebar, or search profiles in the system directory.</p>
                     </div>
                 )}
             </div>
@@ -4058,6 +4124,23 @@ export default function ChatDashboard({ user, onLogout }) {
                             <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>
                                 {activeConv.other_participant ? `@${activeConv.other_participant.username}` : "Personal Cloud"}
                             </div>
+
+                            {activeConv.other_participant?.bio && (
+                                <div style={{
+                                    fontSize: 12,
+                                    color: t.text,
+                                    opacity: 0.85,
+                                    marginTop: 10,
+                                    padding: "8px 12px",
+                                    background: "rgba(120, 120, 120, 0.08)",
+                                    borderRadius: 10,
+                                    textAlign: "center",
+                                    lineHeight: 1.4,
+                                    wordBreak: "break-word"
+                                }}>
+                                    "{activeConv.other_participant.bio}"
+                                </div>
+                            )}
                         </div>
 
                         <div className="ht-inspector-actions" style={{ borderBottom: t.border, paddingBottom: 20 }}>
@@ -4066,8 +4149,10 @@ export default function ChatDashboard({ user, onLogout }) {
                                 style={{ color: t.text }}
                                 onClick={() => {
                                     setViewingParticipantProfile({
+                                        user_id: activeConv.other_participant?.user_id,
                                         display_name: activeConv.display_name,
                                         username: activeConv.other_participant?.username || activeConv.display_name,
+                                        bio: activeConv.other_participant?.bio,
                                         avatar_url: activeConv.avatar_url,
                                         status: activeConv.other_participant?.status || "online",
                                         last_seen: activeConv.other_participant?.last_seen
@@ -4121,14 +4206,15 @@ export default function ChatDashboard({ user, onLogout }) {
                                             type="button"
                                             onClick={() => setIsAddMemberOpen(true)}
                                             style={{
-                                                background: "rgba(56, 189, 248, 0.15)",
-                                                border: `1px solid ${t.accent}`,
-                                                color: t.accent,
+                                                background: theme === "dark" ? "rgba(56, 189, 248, 0.2)" : "rgba(3, 105, 161, 0.12)",
+                                                border: theme === "dark" ? "1px solid rgba(56, 189, 248, 0.5)" : "1px solid rgba(3, 105, 161, 0.3)",
+                                                color: theme === "dark" ? "#38bdf8" : "#0284c7",
                                                 borderRadius: "8px",
-                                                padding: "3px 8px",
+                                                padding: "4px 10px",
                                                 fontSize: "11px",
                                                 fontWeight: "800",
-                                                cursor: "pointer"
+                                                cursor: "pointer",
+                                                transition: "all 0.2s ease"
                                             }}
                                         >
                                             + Add Member
@@ -4591,12 +4677,15 @@ export default function ChatDashboard({ user, onLogout }) {
                                             setIsAddMemberOpen(true);
                                         }}
                                         style={{
-                                            background: "none",
-                                            border: "none",
-                                            color: t.accent,
-                                            fontSize: 12,
-                                            fontWeight: 800,
-                                            cursor: "pointer"
+                                            background: theme === "dark" ? "rgba(56, 189, 248, 0.2)" : "rgba(3, 105, 161, 0.12)",
+                                            border: theme === "dark" ? "1px solid rgba(56, 189, 248, 0.5)" : "1px solid rgba(3, 105, 161, 0.3)",
+                                            color: theme === "dark" ? "#38bdf8" : "#0284c7",
+                                            borderRadius: "8px",
+                                            padding: "4px 10px",
+                                            fontSize: "11px",
+                                            fontWeight: "800",
+                                            cursor: "pointer",
+                                            transition: "all 0.2s ease"
                                         }}
                                     >
                                         + Add Member
@@ -4689,7 +4778,7 @@ export default function ChatDashboard({ user, onLogout }) {
                                 </label>
                                 <input
                                     type="text"
-                                    placeholder="e.g. Design System Team"
+                                    // placeholder="e.g. Design System Team"
                                     value={groupTitle}
                                     onChange={(e) => setGroupTitle(e.target.value)}
                                     style={{
@@ -4947,6 +5036,138 @@ export default function ChatDashboard({ user, onLogout }) {
                 </div>
             )}
 
+            {/* User Profile Modal */}
+            {viewingParticipantProfile && (
+                <div
+                    style={{
+                        position: "fixed",
+                        inset: 0,
+                        zIndex: 9999,
+                        background: "rgba(0, 0, 0, 0.65)",
+                        backdropFilter: "blur(8px)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        padding: 20
+                    }}
+                    onClick={() => setViewingParticipantProfile(null)}
+                >
+                    <div
+                        style={{
+                            background: t.cardBg,
+                            border: t.border,
+                            borderRadius: 24,
+                            width: "100%",
+                            maxWidth: 400,
+                            padding: 24,
+                            boxShadow: "0 20px 50px rgba(0,0,0,0.5)",
+                            position: "relative",
+                            display: "flex",
+                            flexDirection: "column",
+                            alignItems: "center",
+                            textAlign: "center"
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <button
+                            type="button"
+                            onClick={() => setViewingParticipantProfile(null)}
+                            style={{
+                                position: "absolute",
+                                top: 16,
+                                right: 16,
+                                background: "none",
+                                border: "none",
+                                color: t.textMuted,
+                                fontSize: 18,
+                                cursor: "pointer",
+                                fontWeight: 700
+                            }}
+                        >
+                            ✕
+                        </button>
+
+                        <div style={{
+                            width: 80,
+                            height: 80,
+                            borderRadius: "50%",
+                            background: "linear-gradient(135deg, #0284c7, #6366f1)",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            color: "white",
+                            fontSize: 28,
+                            fontWeight: 800,
+                            marginBottom: 14,
+                            position: "relative"
+                        }}>
+                            {viewingParticipantProfile.avatar_url ? (
+                                <img src={getAssetUrl(viewingParticipantProfile.avatar_url)} alt="" style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} />
+                            ) : (
+                                (viewingParticipantProfile.display_name || viewingParticipantProfile.username)?.[0]?.toUpperCase() || "@"
+                            )}
+                            {viewingParticipantProfile.status === "online" && (
+                                <div style={{ position: "absolute", bottom: 2, right: 2, width: 14, height: 14, borderRadius: "50%", background: "#34A853", border: `2px solid ${t.cardBg}` }} />
+                            )}
+                        </div>
+
+                        <h3 style={{ margin: "0 0 2px", fontSize: 18, fontWeight: 800, color: t.text }}>
+                            {viewingParticipantProfile.display_name || viewingParticipantProfile.username}
+                        </h3>
+                        <div style={{ fontSize: 13, color: t.textMuted, marginBottom: 14 }}>
+                            @{viewingParticipantProfile.username}
+                        </div>
+
+                        {/* Bio / About Section */}
+                        <div style={{
+                            width: "100%",
+                            background: "rgba(120, 120, 120, 0.08)",
+                            border: t.border,
+                            borderRadius: 14,
+                            padding: "12px 14px",
+                            marginBottom: 18,
+                            textAlign: "left"
+                        }}>
+                            <div style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.5px", color: t.textMuted, marginBottom: 4 }}>
+                                About / Bio
+                            </div>
+                            <div style={{ fontSize: 13, color: t.text, lineHeight: 1.45, fontStyle: viewingParticipantProfile.bio ? "normal" : "italic", opacity: viewingParticipantProfile.bio ? 1 : 0.6 }}>
+                                {viewingParticipantProfile.bio || "No bio added yet."}
+                            </div>
+                        </div>
+
+                        {viewingParticipantProfile.user_id && viewingParticipantProfile.user_id !== user.userId && (
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    handleStartConversation({
+                                        user_id: viewingParticipantProfile.user_id,
+                                        username: viewingParticipantProfile.username,
+                                        display_name: viewingParticipantProfile.display_name,
+                                        avatar_url: viewingParticipantProfile.avatar_url
+                                    });
+                                    setViewingParticipantProfile(null);
+                                }}
+                                style={{
+                                    width: "100%",
+                                    padding: "11px",
+                                    borderRadius: 12,
+                                    background: t.accent,
+                                    color: "white",
+                                    border: "none",
+                                    fontWeight: 800,
+                                    fontSize: 13,
+                                    cursor: "pointer",
+                                    boxShadow: "0 4px 14px rgba(2, 132, 199, 0.3)"
+                                }}
+                            >
+                                Send Direct Message
+                            </button>
+                        )}
+                    </div>
+                </div>
+            )}
+
             {/* Participant Right-Click Context Menu */}
             {participantContextMenu && (
                 <div
@@ -5040,8 +5261,10 @@ export default function ChatDashboard({ user, onLogout }) {
                         type="button"
                         onClick={() => {
                             setViewingParticipantProfile({
+                                user_id: participantContextMenu.participant.user_id || participantContextMenu.participant.id,
                                 display_name: participantContextMenu.participant.display_name || participantContextMenu.participant.username,
                                 username: participantContextMenu.participant.username,
+                                bio: participantContextMenu.participant.bio,
                                 avatar_url: participantContextMenu.participant.avatar_url,
                                 status: participantContextMenu.participant.status || "offline",
                                 last_seen: participantContextMenu.participant.last_seen
