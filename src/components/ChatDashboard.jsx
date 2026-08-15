@@ -1,48 +1,21 @@
 import { useEffect, useRef, useState } from "react";
-import { authService } from "../services/auth";
 import { userService } from "../services/user";
 import { conversationService } from "../services/conversations";
 import { websocketService } from "../services/websocket";
 import { API_BASE } from "../services/api";
-import EmojiPicker from "emoji-picker-react";
-import VoicePlayer from "./VoicePlayer";
+import { THEME } from "../utils/theme";
 
-const THEME = {
-    light: {
-        sidebarBg: "#f6f7f9",
-        chatBg: "#eceef1",
-        inspectorBg: "#ffffff",
-        border: "1px solid rgba(0, 0, 0, 0.06)",
-        cardBg: "#ffffff",
-        text: "#14171a",
-        textMuted: "#657786",
-        accent: "#03346E",
-        accentHover: "#022854",
-        inputBg: "#ffffff",
-        bubbleSent: "#03346E",
-        bubbleSentText: "#ffffff",
-        bubbleRecv: "#ffffff",
-        bubbleRecvText: "#14171a",
-        inputBorder: "1px solid rgba(0, 0, 0, 0.08)"
-    },
-    dark: {
-        sidebarBg: "#121316",
-        chatBg: "#16171b",
-        inspectorBg: "#1a1c20",
-        border: "1px solid rgba(255, 255, 255, 0.06)",
-        cardBg: "#1e2126",
-        text: "#e1e8ed",
-        textMuted: "#8899a6",
-        accent: "#03346E",
-        accentHover: "#022854",
-        inputBg: "#131417",
-        bubbleSent: "#03346E",
-        bubbleSentText: "#ffffff",
-        bubbleRecv: "#1e2126",
-        bubbleRecvText: "#e1e8ed",
-        inputBorder: "1px solid rgba(255, 255, 255, 0.08)"
-    }
-};
+// Modular Component Imports
+import NavigationRail from "./chat/Sidebar/NavigationRail";
+import ConversationList from "./chat/Sidebar/ConversationList";
+import ConversationInspector from "./chat/Sidebar/ConversationInspector";
+import ChatArea from "./chat/ChatArea/ChatArea";
+import CreateGroupModal from "./chat/Modals/CreateGroupModal";
+import AddMemberModal from "./chat/Modals/AddMemberModal";
+import GroupInfoModal from "./chat/Modals/GroupInfoModal";
+import UserProfileModal from "./chat/Modals/UserProfileModal";
+import ParticipantContextMenu from "./chat/ContextMenu/ParticipantContextMenu";
+
 
 const formatLastSeen = (timestamp) => {
     if (!timestamp) return "offline";
@@ -173,6 +146,10 @@ export default function ChatDashboard({ user, onLogout }) {
         return saved !== null ? saved === "true" : true;
     });
     const [pinnedMessageIdMap, setPinnedMessageIdMap] = useState({});
+    const [pinnedMessagesMap, setPinnedMessagesMap] = useState({});
+    const [pinScopePromptMsg, setPinScopePromptMsg] = useState(null);
+    const [pinNotifyStep, setPinNotifyStep] = useState(false);
+    const [pinnedListOpen, setPinnedListOpen] = useState(false);
     const [isInChatSearchOpen, setIsInChatSearchOpen] = useState(false);
     const [inChatSearchQuery, setInChatSearchQuery] = useState("");
     const [inChatSearchMatchIndex, setInChatSearchMatchIndex] = useState(0);
@@ -209,6 +186,8 @@ export default function ChatDashboard({ user, onLogout }) {
             document.removeEventListener("mousedown", handleClickOutside);
         };
     }, [isHeaderMenuOpen]);
+
+
     const [viewingParticipantProfile, setViewingParticipantProfile] = useState(null);
     const [isRailExpanded, setIsRailExpanded] = useState(() => {
         const saved = localStorage.getItem("chat_rail_expanded");
@@ -596,16 +575,6 @@ export default function ChatDashboard({ user, onLogout }) {
     const [selectedGroupMembers, setSelectedGroupMembers] = useState([]);
     const [isCreatingGroup, setIsCreatingGroup] = useState(false);
 
-    const getSenderNameColor = (senderId) => {
-        const colors = ["#38bdf8", "#818cf8", "#f43f5e", "#fbbf24", "#34d399", "#a78bfa", "#f472b6"];
-        if (!senderId) return colors[0];
-        let hash = 0;
-        for (let i = 0; i < senderId.length; i++) {
-            hash = senderId.charCodeAt(i) + ((hash << 5) - hash);
-        }
-        return colors[Math.abs(hash) % colors.length];
-    };
-
     // User search effect for group members
     useEffect(() => {
         if (!groupSearchQuery.trim()) {
@@ -852,6 +821,7 @@ export default function ChatDashboard({ user, onLogout }) {
                     last_message_content: c.last_message?.content || "",
                     last_message_time: c.last_message?.created_at || null,
                     other_participant: other,
+                    status: other?.status || c.status,
                     last_message: c.last_message,
                     unread_count: c.unread_count || 0
                 };
@@ -886,11 +856,69 @@ export default function ChatDashboard({ user, onLogout }) {
             });
             setPinnedMessageIdMap(map);
 
-            setConversations([selfConv, ...sortedOthers].filter(Boolean));
+            const fullList = [selfConv, ...sortedOthers].filter(Boolean);
+            setConversations(fullList);
+
+            if (activeConvRef.current) {
+                const freshActive = fullList.find(c => c.id === activeConvRef.current.id);
+                if (freshActive) {
+                    setActiveConv(prev => {
+                        if (!prev) return freshActive;
+                        return {
+                            ...prev,
+                            ...freshActive,
+                            status: freshActive.status || freshActive.other_participant?.status || prev.status,
+                            other_participant: freshActive.other_participant ? {
+                                ...prev.other_participant,
+                                ...freshActive.other_participant,
+                                status: freshActive.other_participant.status
+                            } : prev.other_participant
+                        };
+                    });
+                }
+            }
         } catch (err) {
             console.error("Failed to load conversations:", err);
         }
     };
+
+    // Periodic background sync loop every 5 seconds as a fail-safe backup for WebSockets
+    useEffect(() => {
+        if (!user?.token) return;
+
+        const interval = setInterval(() => {
+            loadConversations();
+        }, 5000);
+
+        return () => clearInterval(interval);
+    }, [user]);
+
+    // Periodic message re-sync for the active conversation — fixes chat screen stuck on old messages.
+    // The conversation list is polled every 5s (sidebar shows new previews) but the chat thread
+    // has no equivalent refresh unless a WebSocket event fires. This closes that gap.
+    useEffect(() => {
+        if (!user?.token) return;
+
+        const interval = setInterval(async () => {
+            const conv = activeConvRef.current;
+            if (!conv || !conv.id || conv.id === "virtual-saved-messages") return;
+            try {
+                const history = await conversationService.getMessages(conv.id);
+                if (!history || !history.length) return;
+                const incoming = history.map(m => ({ ...m, id: m.message_id || m.id }));
+                setMessages(prev => {
+                    const existingIds = new Set(prev.map(m => m.id || m.message_id));
+                    const newOnes = incoming.filter(m => !existingIds.has(m.id));
+                    if (newOnes.length === 0) return prev;
+                    return [...prev, ...newOnes];
+                });
+            } catch (err) {
+                // silent — WS is primary; this is a fallback
+            }
+        }, 4000);
+
+        return () => clearInterval(interval);
+    }, [user]);
 
     useEffect(() => {
         loadConversations();
@@ -990,16 +1018,22 @@ export default function ChatDashboard({ user, onLogout }) {
 
                             // If sent by current user, replace optimistic temporary message if present
                             if (data.sender_id === user.userId) {
-                                const tempIdx = prev.findIndex(m => m.id && m.id.toString().startsWith("temp-") && m.content === data.content);
+                                const tempIdx = prev.findIndex(m => m.id && m.id.toString().startsWith("temp") && (m.content === data.content || m.message_type === data.message_type || !m.content));
                                 if (tempIdx !== -1) {
                                     const copy = [...prev];
                                     copy[tempIdx] = {
                                         id: data.message_id,
+                                        message_id: data.message_id,
                                         sender_id: data.sender_id,
+                                        sender_name: data.sender_name,
+                                        sender_avatar: data.sender_avatar,
                                         content: data.content,
                                         message_type: data.message_type,
                                         media_url: data.media_url,
-                                        created_at: data.created_at
+                                        created_at: data.created_at,
+                                        reply_to_id: data.reply_to_id || null,
+                                        status: data.status || "delivered",
+                                        reactions: data.reactions || {}
                                     };
                                     return copy;
                                 }
@@ -1009,11 +1043,17 @@ export default function ChatDashboard({ user, onLogout }) {
                                 ...prev,
                                 {
                                     id: data.message_id,
+                                    message_id: data.message_id,
                                     sender_id: data.sender_id,
+                                    sender_name: data.sender_name,
+                                    sender_avatar: data.sender_avatar,
                                     content: data.content,
                                     message_type: data.message_type,
                                     media_url: data.media_url,
-                                    created_at: data.created_at
+                                    created_at: data.created_at,
+                                    reply_to_id: data.reply_to_id || null,
+                                    status: data.status || "delivered",
+                                    reactions: data.reactions || {}
                                 }
                             ];
                         });
@@ -1140,16 +1180,41 @@ export default function ChatDashboard({ user, onLogout }) {
                         return m;
                     }));
                 } else if (data.event === "message_pinned") {
+                    const scope = data.scope || "shared";
+                    const pUser = String(data.pinned_by_user_id || "");
+                    if (scope === "personal" && pUser && pUser !== String(user.userId)) {
+                        return;
+                    }
+                    const pinnedObj = data.pinned_message || {
+                        message_id: data.message_id,
+                        id: data.message_id,
+                        conversation_id: data.conversation_id,
+                        scope,
+                        pinned_by_user_id: pUser,
+                    };
+                    setPinnedMessagesMap(prev => {
+                        const list = prev[data.conversation_id] || [];
+                        const filtered = list.filter(p => String(p.message_id || p.id) !== String(data.message_id));
+                        return { ...prev, [data.conversation_id]: [pinnedObj, ...filtered] };
+                    });
                     setPinnedMessageIdMap(prev => ({
                         ...prev,
                         [data.conversation_id]: data.message_id
                     }));
-                } else if (data.event === "user_status") {
+                } else if (data.event === "message_unpinned") {
+                    setPinnedMessagesMap(prev => {
+                        const list = prev[data.conversation_id] || [];
+                        const filtered = list.filter(p => String(p.message_id || p.id) !== String(data.message_id));
+                        return { ...prev, [data.conversation_id]: filtered };
+                    });
+                } else if (data.event === "user_status" || data.type === "user_status" || data.action === "user_status") {
                     setConversations(prev => {
                         return prev.map(c => {
-                            if (c.other_participant && c.other_participant.user_id === data.user_id) {
+                            const otherId = c.other_participant?.user_id || c.other_participant?.id;
+                            if (otherId && String(otherId) === String(data.user_id)) {
                                 return {
                                     ...c,
+                                    status: data.status,
                                     other_participant: {
                                         ...c.other_participant,
                                         status: data.status,
@@ -1162,9 +1227,11 @@ export default function ChatDashboard({ user, onLogout }) {
                     });
 
                     setActiveConv(prev => {
-                        if (prev && prev.other_participant && prev.other_participant.user_id === data.user_id) {
+                        const otherId = prev?.other_participant?.user_id || prev?.other_participant?.id;
+                        if (otherId && String(otherId) === String(data.user_id)) {
                             return {
                                 ...prev,
+                                status: data.status,
                                 other_participant: {
                                     ...prev.other_participant,
                                     status: data.status,
@@ -1301,6 +1368,14 @@ export default function ChatDashboard({ user, onLogout }) {
             const uniqueMap = new Map();
             mapped.forEach(m => uniqueMap.set(m.id, m));
             setMessages(Array.from(uniqueMap.values()));
+
+            // Fetch pinned messages stack
+            try {
+                const pins = await fetchWithAuth(`/conversations/${conv.id}/pins`);
+                if (Array.isArray(pins)) {
+                    setPinnedMessagesMap(prev => ({ ...prev, [conv.id]: pins }));
+                }
+            } catch (e) { }
 
             // Read conversation notification
             socketRef.current?.send(JSON.stringify({
@@ -1506,7 +1581,7 @@ export default function ChatDashboard({ user, onLogout }) {
                     setUploadProgress(progressInfo);
                 });
                 mediaUrl = uploadRes.url;
-                mType = selectedFile.type.startsWith("image/") ? "image" : "file";
+                mType = selectedFile.type.startsWith("image/") ? "image" : (selectedFile.type.startsWith("audio/") ? "audio" : "file");
                 if (!finalContent) {
                     finalContent = selectedFile.name; // Use filename as fallback text
                 }
@@ -1725,25 +1800,69 @@ export default function ChatDashboard({ user, onLogout }) {
         handleCloseContextMenu();
     };
 
-    const handleTogglePin = (msg) => {
+    const isGroup = activeConv?.type === 'group';
+    const currentParticipant = (activeConv?.participants || []).find(p => String(p.user_id || p.id) === String(user.userId));
+    const isAdmin = !isGroup || String(activeConv?.creator_id) === String(user.userId) || currentParticipant?.role === 'admin' || currentParticipant?.role === 'creator';
+
+    const handleTogglePin = (msg, forceScope = null) => {
         if (!activeConv) return;
         const msgId = String(msg.id || msg.message_id || "");
-        const currentPinnedId = pinnedMessageIdMap[activeConv.id];
-        const isCurrentlyPinned = currentPinnedId === msgId;
+        const currentPins = pinnedMessagesMap[activeConv.id] || [];
+        const isCurrentlyPinned = currentPins.some(p => String(p.message_id || p.id) === msgId);
 
-        const payload = {
-            action: "pin_message",
-            conversation_id: String(activeConv.id)
-        };
-        if (!isCurrentlyPinned) {
-            payload.message_id = msgId;
+        if (isCurrentlyPinned) {
+            handleUnpin(msg);
+        } else if (forceScope) {
+            executePin(msg, forceScope);
+        } else {
+            setPinScopePromptMsg(msg);
+            setPinNotifyStep(false);
+            handleCloseContextMenu();
         }
+    };
 
-        safeSendWs(payload);
+    const executePin = (msg, scope = "shared", notify = true) => {
+        if (!activeConv || !msg) return;
+        const msgId = String(msg.id || msg.message_id || "");
+        safeSendWs({
+            action: "pin_message",
+            conversation_id: String(activeConv.id),
+            message_id: msgId,
+            scope,
+            notify,
+        });
 
-        setPinnedMessageIdMap(prev => ({
+        const pinObj = {
+            ...msg,
+            message_id: msgId,
+            conversation_id: String(activeConv.id),
+            scope,
+            notify,
+            pinned_by_user_id: user.userId,
+        };
+
+        setPinnedMessagesMap(prev => ({
             ...prev,
-            [activeConv.id]: isCurrentlyPinned ? null : msgId
+            [activeConv.id]: [pinObj, ...(prev[activeConv.id] || []).filter(p => String(p.message_id || p.id) !== msgId)]
+        }));
+
+        setPinScopePromptMsg(null);
+        setPinNotifyStep(false);
+        handleCloseContextMenu();
+    };
+
+    const handleUnpin = (msg) => {
+        if (!activeConv || !msg) return;
+        const msgId = String(msg.id || msg.message_id || "");
+        safeSendWs({
+            action: "unpin_message",
+            conversation_id: String(activeConv.id),
+            message_id: msgId,
+        });
+
+        setPinnedMessagesMap(prev => ({
+            ...prev,
+            [activeConv.id]: (prev[activeConv.id] || []).filter(p => String(p.message_id || p.id) !== msgId)
         }));
         handleCloseContextMenu();
     };
@@ -1878,2523 +1997,164 @@ export default function ChatDashboard({ user, onLogout }) {
             )}
 
             {/* 1. Far Left Rail Navigation */}
-            <div className={`ht-rail ${isRailExpanded ? "expanded" : ""}`}>
-                <div className="ht-rail-top">
-                    {/* Top Header & Toggle Button */}
-                    {isRailExpanded ? (
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", paddingBottom: 10, borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
-                            <div
-                                onClick={() => setActiveRailTab("profile")}
-                                style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", minWidth: 0, flex: 1 }}
-                                title="View Profile"
-                            >
-                                <div className="ht-rail-avatar" style={{ width: 34, height: 34, margin: 0, border: "1.5px solid rgba(56, 189, 248, 0.5)" }}>
-                                    {myProfile?.avatar_url ? (
-                                        <img src={myProfile.avatar_url} alt="Profile" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                                    ) : (
-                                        user?.username?.[0]?.toUpperCase() || "U"
-                                    )}
-                                </div>
-                                <div style={{ minWidth: 0, flex: 1 }}>
-                                    <div style={{ fontSize: 13, fontWeight: 800, color: "#fff", textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap", letterSpacing: "-0.2px" }}>
-                                        {myProfile?.display_name || user?.username}
-                                    </div>
-                                    <div style={{ fontSize: 10.5, color: "rgba(255,255,255,0.5)", textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>
-                                        @{user?.username}
-                                    </div>
-                                </div>
-                            </div>
-
-                            <button
-                                type="button"
-                                className="ht-rail-toggle-btn"
-                                onClick={toggleRailExpanded}
-                                title="Collapse Sidebar"
-                                style={{ marginLeft: 6 }}
-                            >
-                                <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
-                                </svg>
-                            </button>
-                        </div>
-                    ) : (
-                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, width: "100%", marginBottom: 8 }}>
-                            <button
-                                type="button"
-                                className="ht-rail-toggle-btn"
-                                onClick={toggleRailExpanded}
-                                title="Expand Sidebar"
-                                style={{ width: 40, height: 40 }}
-                            >
-                                <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
-                                </svg>
-                            </button>
-                            <div className="ht-rail-avatar" onClick={() => setActiveRailTab("profile")} title="My Profile" style={{ margin: 0 }}>
-                                {myProfile?.avatar_url ? (
-                                    <img src={myProfile.avatar_url} alt="Profile" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                                ) : (
-                                    user?.username?.[0]?.toUpperCase() || "U"
-                                )}
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Navigation Menu */}
-                    <div className="ht-rail-menu">
-                        <button className={`ht-rail-btn ${activeRailTab === "chats" ? "active" : ""}`} onClick={() => setActiveRailTab("chats")} title="Messages">
-                            <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" style={{ flexShrink: 0 }}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                            </svg>
-                            {isRailExpanded && <span className="ht-rail-btn-label">Chats</span>}
-                        </button>
-
-                        <button className={`ht-rail-btn ${activeRailTab === "profile" ? "active" : ""}`} onClick={() => setActiveRailTab("profile")} title="Profile Details">
-                            <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" style={{ flexShrink: 0 }}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                            </svg>
-                            {isRailExpanded && <span className="ht-rail-btn-label">Profile</span>}
-                        </button>
-
-                        <button className={`ht-rail-btn ${activeRailTab === "settings" ? "active" : ""}`} onClick={() => setActiveRailTab("settings")} title="Preferences">
-                            <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" style={{ flexShrink: 0 }}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                            </svg>
-                            {isRailExpanded && <span className="ht-rail-btn-label">Settings</span>}
-                        </button>
-                    </div>
-                </div>
-
-                {/* Footer Log Out Button */}
-                <div className="ht-rail-bottom" style={{ width: "100%" }}>
-                    <button
-                        type="button"
-                        className="ht-rail-btn"
-                        onClick={onLogout}
-                        title="Log Out"
-                        style={{ color: "#ef4444", width: "100%" }}
-                    >
-                        <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" style={{ flexShrink: 0 }}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                        </svg>
-                        {isRailExpanded && <span className="ht-rail-btn-label" style={{ color: "#ef4444" }}>Log Out</span>}
-                    </button>
-                </div>
-            </div>
+            <NavigationRail
+                isRailExpanded={isRailExpanded}
+                toggleRailExpanded={toggleRailExpanded}
+                setActiveRailTab={setActiveRailTab}
+                activeRailTab={activeRailTab}
+                myProfile={myProfile}
+                user={user}
+                onLogout={onLogout}
+            />
 
             {/* 2. Conversations / Settings / Profile Sidebar */}
-            <div className="ht-sidebar" style={{ width: `${leftSidebarWidth}px`, background: t.sidebarBg, borderRight: t.border, position: "relative", flexShrink: 0 }}>
-                {activeRailTab === "chats" && (
-                    <>
-                        <div className="ht-sidebar-header">
-                            <div className="ht-sidebar-title-row" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                                {/* <h2 style={{ margin: 0, fontSize: 20, fontWeight: "800", color: t.text }}>Messages</h2> */}
-
-                                {syncState === "connecting" && (
-                                    <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, fontWeight: 600, color: "#acacacff" }}>
-                                        <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#acacacff", display: "inline-block" }} />
-                                        <span>Connecting...</span>
-                                    </div>
-                                )}
-
-                                {syncState === "updating" && (
-                                    <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, fontWeight: 600, color: "#acacacff" }}>
-                                        <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#acacacff", display: "inline-block" }} />
-                                        <span>Updating...</span>
-                                    </div>
-                                )}
-
-                                {syncState === "ready" && (
-                                    <span style={{
-                                        fontSize: 16,
-                                        fontWeight: 900,
-                                        letterSpacing: "0.2px",
-                                        background: "linear-gradient(135deg, #38bdf8, #818cf8)",
-                                        WebkitBackgroundClip: "text",
-                                        WebkitTextFillColor: "transparent",
-                                        textTransform: "uppercase"
-                                    }}>
-                                        " FlowChat
-                                    </span>
-                                )}
-                            </div>
-                            <div className="ht-sidebar-search-row">
-                                <div className="ht-search-container">
-                                    <svg className="ht-search-icon" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                                    </svg>
-                                    <input
-                                        type="text"
-                                        placeholder="Search user profile..."
-                                        value={searchQuery}
-                                        onChange={(e) => setSearchQuery(e.target.value)}
-                                        className="ht-search-pill"
-                                        style={{ background: t.inputBg, border: t.inputBorder, color: t.text }}
-                                    />
-                                </div>
-                            </div>
-
-                            {/* Pinned Conversations Section (Rendered ABOVE Category Tabs) */}
-                            {!searchQuery.trim() && (() => {
-                                const pinnedList = conversations.filter(c => isConvPinned(c));
-                                if (pinnedList.length === 0) return null;
-
-                                return (
-                                    <div style={{ padding: "8px 16px 4px", borderBottom: t.border }}>
-                                        <div className="ht-section-label" style={{ color: theme === "dark" ? "#38bdf8" : "#082a3bff", paddingLeft: 0, marginBottom: 6, display: "flex", alignItems: "center", gap: 5 }}>
-                                            <svg width="12" height="12" fill="currentColor" viewBox="0 0 24 24">
-                                                <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
-                                            </svg>
-                                            <span>Pinned Conversations</span>
-                                        </div>
-                                        {pinnedList.map(c => {
-                                            const isActive = activeConv && activeConv.id === c.id;
-                                            const isSaved = c.id === "virtual-saved-messages" || (c.type === "direct" && !c.other_participant);
-                                            const isGroup = c.type === "group";
-                                            const isOnline = !isGroup && !isSaved && c.other_participant?.status === "online";
-
-                                            return (
-                                                <div
-                                                    key={c.id}
-                                                    onClick={() => handleSelectConversation(c)}
-                                                    style={{
-                                                        display: "flex",
-                                                        alignItems: "center",
-                                                        gap: 12,
-                                                        padding: "10px 12px",
-                                                        borderRadius: 14,
-                                                        cursor: "pointer",
-                                                        background: isActive
-                                                            ? (theme === "dark" ? "rgba(56, 189, 248, 0.12)" : "rgba(3, 52, 110, 0.08)")
-                                                            : (theme === "dark" ? "rgba(120, 120, 120, 0.05)" : "rgba(0, 0, 0, 0.03)"),
-                                                        marginBottom: 4,
-                                                        border: isActive ? `1px solid ${theme === "dark" ? "#38bdf8" : "#0284c7"}` : "1px solid transparent",
-                                                        transition: "all 0.2s ease"
-                                                    }}
-                                                >
-                                                    <div style={{
-                                                        width: 38,
-                                                        height: 38,
-                                                        borderRadius: "50%",
-                                                        background: isSaved
-                                                            ? "linear-gradient(135deg, #de4977, #c93b66)"
-                                                            : (isGroup ? "linear-gradient(135deg, #6366f1, #4f46e5)" : "#4f46e5"),
-                                                        display: "flex",
-                                                        alignItems: "center",
-                                                        justifyContent: "center",
-                                                        color: "white",
-                                                        fontWeight: "800",
-                                                        flexShrink: 0,
-                                                        position: "relative"
-                                                    }}>
-                                                        {isSaved ? (
-                                                            <svg width="18" height="18" fill="currentColor" viewBox="0 0 24 24">
-                                                                <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
-                                                            </svg>
-                                                        ) : c.avatar_url ? (
-                                                            <img src={c.avatar_url} alt="" style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} />
-                                                        ) : (
-                                                            c.display_name?.[0]?.toUpperCase() || (isGroup ? "G" : "@")
-                                                        )}
-                                                        {isOnline && (
-                                                            <div style={{ position: "absolute", bottom: 0, right: 0, width: 9, height: 9, borderRadius: "50%", background: "#34A853", border: `2px solid ${t.sidebarBg}` }} />
-                                                        )}
-                                                    </div>
-                                                    <div style={{ flex: 1, minWidth: 0 }}>
-                                                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6, width: "100%" }}>
-                                                            <div style={{ display: "flex", alignItems: "center", gap: 5, minWidth: 0, flex: 1 }}>
-                                                                <span style={{ fontSize: 13, fontWeight: "750", color: t.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                                                                    {isSaved ? "Saved Messages" : c.display_name}
-                                                                </span>
-                                                                {isGroup && (
-                                                                    <span
-                                                                        title="Group Chat"
-                                                                        style={{
-                                                                            display: "inline-flex",
-                                                                            alignItems: "center",
-                                                                            justifyContent: "center",
-                                                                            background: "rgba(56,189,248,0.18)",
-                                                                            color: "#38bdf8",
-                                                                            width: 22,
-                                                                            height: 22,
-                                                                            borderRadius: "50%",
-                                                                            flexShrink: 0
-                                                                        }}
-                                                                    >
-                                                                        <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                                                            <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                                                                        </svg>
-                                                                    </span>
-                                                                )}
-                                                            </div>
-                                                            <span style={{ fontSize: 9.5, color: c.unread_count > 0 ? t.accent : t.textMuted, fontWeight: c.unread_count > 0 ? "700" : "normal", flexShrink: 0, marginLeft: 4 }}>
-                                                                {isSaved ? "" : formatTime(c.last_message_time)}
-                                                            </span>
-                                                        </div>
-                                                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 2 }}>
-                                                            <p style={{ margin: 0, fontSize: 11, color: c.unread_count > 0 ? t.text : t.textMuted, fontWeight: c.unread_count > 0 ? "600" : "normal", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "flex", alignItems: "center", gap: 4, flex: 1, minWidth: 0 }}>
-                                                                {c.last_message && c.last_message.sender_id === user.userId && renderMessageStatus(c.last_message.status, true)}
-                                                                <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
-                                                                    {isSaved ? "Personal notes cloud inbox" : (c.last_message_content || (isGroup ? `${c.participants?.length || 0} members` : "No messages yet"))}
-                                                                </span>
-                                                            </p>
-                                                            {c.unread_count > 0 && (
-                                                                <div style={{ background: t.accent, color: "#ffffff", borderRadius: 10, padding: "2px 7px", fontSize: 10.5, fontWeight: "700", marginLeft: 6, flexShrink: 0 }}>
-                                                                    {c.unread_count}
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
-                                );
-                            })()}
-
-                            {/* Category Filter Tabs (All Messages / Groups) */}
-                            {(() => {
-                                const groupUnreadTotal = conversations
-                                    .filter(c => c.type === "group")
-                                    .reduce((acc, c) => acc + (c.unread_count || 0), 0);
-
-                                return (
-                                    <div style={{ display: "flex", gap: 6, padding: "8px 12px", borderBottom: t.border, width: "100%", boxSizing: "border-box" }}>
-                                        <button
-                                            type="button"
-                                            onClick={() => setConvoTab("all")}
-                                            style={{
-                                                flex: 1,
-                                                background: convoTab === "all" ? "rgba(56, 189, 248, 0.15)" : "transparent",
-                                                border: "none",
-                                                borderRadius: "10px",
-                                                padding: "6px 8px",
-                                                fontSize: "12px",
-                                                fontWeight: 800,
-                                                color: convoTab === "all" ? (theme === "dark" ? "#38bdf8" : t.accent) : t.textMuted,
-                                                cursor: "pointer",
-                                                textAlign: "center",
-                                                whiteSpace: "nowrap",
-                                                transition: "all 0.2s ease"
-                                            }}
-                                        >
-                                            All Messages
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={() => setConvoTab("groups")}
-                                            style={{
-                                                flex: 1,
-                                                background: convoTab === "groups" ? "rgba(56, 189, 248, 0.15)" : "transparent",
-                                                border: "none",
-                                                borderRadius: "10px",
-                                                padding: "6px 8px",
-                                                fontSize: "12px",
-                                                fontWeight: 800,
-                                                color: convoTab === "groups" ? (theme === "dark" ? "#38bdf8" : t.accent) : t.textMuted,
-                                                cursor: "pointer",
-                                                display: "flex",
-                                                alignItems: "center",
-                                                justifyContent: "center",
-                                                gap: 6,
-                                                whiteSpace: "nowrap",
-                                                transition: "all 0.2s ease"
-                                            }}
-                                        >
-                                            <span>Groups</span>
-                                            {groupUnreadTotal > 0 && (
-                                                <span style={{
-                                                    background: t.accent,
-                                                    color: "#ffffff",
-                                                    borderRadius: 10,
-                                                    padding: "1px 6px",
-                                                    fontSize: 10,
-                                                    fontWeight: 800
-                                                }}>
-                                                    {groupUnreadTotal}
-                                                </span>
-                                            )}
-                                        </button>
-                                    </div>
-                                );
-                            })()}
-                        </div>
-
-                        <div className="ht-convo-list">
-                            {isSearching ? (
-                                <div style={{ textAlign: "center", padding: "20px 0", fontSize: 13, color: t.textMuted }}>Scanning database profiles...</div>
-                            ) : searchQuery.trim() ? (
-                                <>
-                                    <div className="ht-section-label" style={{ color: t.textMuted }}>Directory matches</div>
-                                    {searchResults.map(userItem => (
-                                        <div
-                                            key={userItem.user_id || userItem.id}
-                                            onClick={() => handleStartConversation(userItem)}
-                                            style={{
-                                                display: "flex",
-                                                alignItems: "center",
-                                                gap: 12,
-                                                padding: "10px 12px",
-                                                borderRadius: 12,
-                                                cursor: "pointer",
-                                                background: "rgba(120, 120, 120, 0.05)",
-                                                margin: "0 4px 6px"
-                                            }}
-                                        >
-                                            <div style={{ width: 38, height: 38, borderRadius: "50%", background: "#de4977", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontWeight: "700" }}>
-                                                {(userItem.display_name || userItem.username)[0].toUpperCase()}
-                                            </div>
-                                            <div>
-                                                <div style={{ fontSize: 13, fontWeight: "700", color: t.text }}>{userItem.display_name || userItem.username}</div>
-                                                <div style={{ fontSize: 11, color: t.textMuted }}>@{userItem.username}</div>
-                                            </div>
-                                        </div>
-                                    ))}
-                                    {searchResults.length === 0 && (
-                                        <div style={{ textAlign: "center", padding: 20, color: t.textMuted, fontSize: 12 }}>No matching nodes.</div>
-                                    )}
-                                </>
-                            ) : convoTab === "groups" ? (
-                                <>
-                                    <div style={{ color: t.textMuted, display: "flex", alignItems: "center", justifyContent: "space-between", paddingRight: 12 }}>
-                                        <span className="ht-section-label" >Group Chats</span>
-                                        <button
-                                            type="button"
-                                            onClick={() => setIsCreateGroupOpen(true)}
-                                            style={{
-                                                background: theme === "dark" ? "rgba(56, 189, 248, 0.2)" : "rgba(3, 105, 161, 0.12)",
-                                                border: theme === "dark" ? "1px solid rgba(56, 189, 248, 0.5)" : "1px solid rgba(3, 105, 161, 0.3)",
-                                                color: theme === "dark" ? "#38bdf8" : "#0284c7",
-                                                borderRadius: "8px",
-                                                padding: "4px 10px",
-                                                fontSize: "11px",
-                                                fontWeight: "800",
-                                                cursor: "pointer",
-                                                display: "flex",
-                                                alignItems: "center",
-                                                gap: "4px",
-                                                transition: "all 0.2s ease"
-                                            }}
-                                            title="Create New Group Chat"
-                                        >
-                                            <span>+ Group</span>
-                                        </button>
-                                    </div>
-                                    {conversations.filter(c => c.type === "group").map(c => {
-                                        const isActive = activeConv && activeConv.id === c.id;
-                                        return (
-                                            <div
-                                                key={c.id}
-                                                onClick={() => handleSelectConversation(c)}
-                                                style={{
-                                                    display: "flex",
-                                                    alignItems: "center",
-                                                    gap: 12,
-                                                    padding: "12px 14px",
-                                                    borderRadius: 14,
-                                                    cursor: "pointer",
-                                                    background: isActive ? "rgba(120, 120, 120, 0.09)" : "transparent",
-                                                    marginBottom: 4,
-                                                    border: isActive ? `1px solid ${t.accent}` : "1px solid transparent"
-                                                }}
-                                            >
-                                                <div style={{ width: 40, height: 40, borderRadius: "50%", background: "linear-gradient(135deg, #6366f1, #4f46e5)", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontWeight: "800", flexShrink: 0, position: "relative" }}>
-                                                    {c.avatar_url ? (
-                                                        <img src={getAssetUrl(c.avatar_url)} alt="" style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} />
-                                                    ) : (
-                                                        c.display_name?.[0]?.toUpperCase() || "G"
-                                                    )}
-                                                </div>
-                                                <div style={{ flex: 1, minWidth: 0 }}>
-                                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6, width: "100%" }}>
-                                                        <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, flex: 1 }}>
-                                                            <span style={{ fontSize: 13, fontWeight: "755", color: t.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.display_name}</span>
-                                                            <span
-                                                                title="Group Chat"
-                                                                style={{
-                                                                    display: "inline-flex",
-                                                                    alignItems: "center",
-                                                                    justifyContent: "center",
-                                                                    background: "rgba(56,189,248,0.18)",
-                                                                    color: "#38bdf8",
-                                                                    width: 22,
-                                                                    height: 22,
-                                                                    borderRadius: "50%",
-                                                                    flexShrink: 0
-                                                                }}
-                                                            >
-                                                                <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                                                                </svg>
-                                                            </span>
-                                                        </div>
-                                                        <span style={{ fontSize: 9.5, color: c.unread_count > 0 ? t.accent : t.textMuted, fontWeight: c.unread_count > 0 ? "700" : "normal", flexShrink: 0, marginLeft: 4 }}>{formatTime(c.last_message_time)}</span>
-                                                    </div>
-                                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 2 }}>
-                                                        <p style={{ margin: 0, fontSize: 11.5, color: c.unread_count > 0 ? t.text : t.textMuted, fontWeight: c.unread_count > 0 ? "600" : "normal", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "flex", alignItems: "center", gap: 4, flex: 1 }}>
-                                                            {c.last_message && c.last_message.sender_id === user.userId && renderMessageStatus(c.last_message.status, true)}
-                                                            <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
-                                                                {c.last_message_content || `${c.participants?.length || 0} members`}
-                                                            </span>
-                                                        </p>
-                                                        {c.unread_count > 0 && (
-                                                            <div style={{ background: t.accent, color: "#ffffff", borderRadius: 10, padding: "2px 7px", fontSize: 10.5, fontWeight: "700", marginLeft: 6, flexShrink: 0 }}>
-                                                                {c.unread_count}
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-                                    {conversations.filter(c => c.type === "group").length === 0 && (
-                                        <div style={{ textAlign: "center", padding: "30px 10px", color: t.textMuted, fontSize: 12 }}>No group chats.</div>
-                                    )}
-                                </>
-                            ) : (
-                                <>
-                                    {/* All Direct Messages & Group Messages */}
-                                    <div className="ht-section-label" style={{ color: theme === "dark" ? "#38bdf8" : "#082a3bff", paddingLeft: 15, marginBottom: 6, display: "flex", alignItems: "center", gap: 5 }}>All Messages</div>
-                                    {conversations.map(c => {
-                                        const isActive = activeConv && activeConv.id === c.id;
-                                        const isSaved = c.id === "virtual-saved-messages" || (c.type === "direct" && !c.other_participant);
-                                        const isGroup = c.type === "group";
-                                        const isOnline = !isGroup && !isSaved && c.other_participant?.status === "online";
-
-                                        return (
-                                            <div
-                                                key={c.id}
-                                                onClick={() => handleSelectConversation(c)}
-                                                style={{
-                                                    display: "flex",
-                                                    alignItems: "center",
-                                                    gap: 12,
-                                                    padding: "12px 14px",
-                                                    borderRadius: 14,
-                                                    cursor: "pointer",
-                                                    background: isActive ? "rgba(120, 120, 120, 0.09)" : "transparent",
-                                                    marginBottom: 4,
-                                                    border: isActive ? `1px solid rgba(120, 120, 120, 0.15)` : "1px solid transparent"
-                                                }}
-                                            >
-                                                <div style={{
-                                                    width: 40,
-                                                    height: 40,
-                                                    borderRadius: "50%",
-                                                    background: isSaved
-                                                        ? "linear-gradient(135deg, #de4977, #c93b66)"
-                                                        : (isGroup ? "linear-gradient(135deg, #6366f1, #4f46e5)" : "#4f46e5"),
-                                                    display: "flex",
-                                                    alignItems: "center",
-                                                    justifyContent: "center",
-                                                    color: "white",
-                                                    fontWeight: "800",
-                                                    flexShrink: 0,
-                                                    position: "relative"
-                                                }}>
-                                                    {isSaved ? (
-                                                        <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24">
-                                                            <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
-                                                        </svg>
-                                                    ) : c.avatar_url ? (
-                                                        <img src={getAssetUrl(c.avatar_url)} alt="" style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} />
-                                                    ) : (
-                                                        c.display_name?.[0]?.toUpperCase() || (isGroup ? "G" : "@")
-                                                    )}
-                                                    {isOnline && (
-                                                        <div style={{ position: "absolute", bottom: 0, right: 0, width: 10, height: 10, borderRadius: "50%", background: "#34A853", border: `2px solid ${t.sidebarBg}` }} />
-                                                    )}
-                                                </div>
-                                                <div style={{ flex: 1, minWidth: 0 }}>
-                                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6, width: "100%" }}>
-                                                        <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, flex: 1 }}>
-                                                            <span style={{ fontSize: 13, fontWeight: "755", color: t.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                                                                {isSaved ? "Saved Messages" : c.display_name}
-                                                            </span>
-                                                            {isGroup && (
-                                                                <span
-                                                                    title="Group Chat"
-                                                                    style={{
-                                                                        display: "inline-flex",
-                                                                        alignItems: "center",
-                                                                        justifyContent: "center",
-                                                                        background: "rgba(56,189,248,0.18)",
-                                                                        color: "#38bdf8",
-                                                                        width: 22,
-                                                                        height: 22,
-                                                                        borderRadius: "50%",
-                                                                        flexShrink: 0
-                                                                    }}
-                                                                >
-                                                                    <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                                                        <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                                                                    </svg>
-                                                                </span>
-                                                            )}
-                                                        </div>
-                                                        <span style={{ fontSize: 9.5, color: c.unread_count > 0 ? t.accent : t.textMuted, fontWeight: c.unread_count > 0 ? "700" : "normal", flexShrink: 0, marginLeft: 4 }}>
-                                                            {isSaved ? "" : formatTime(c.last_message_time)}
-                                                        </span>
-                                                    </div>
-                                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 2 }}>
-                                                        <p style={{ margin: 0, fontSize: 11.5, color: c.unread_count > 0 ? t.text : t.textMuted, fontWeight: c.unread_count > 0 ? "600" : "normal", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "flex", alignItems: "center", gap: 4, flex: 1 }}>
-                                                            {c.last_message && c.last_message.sender_id === user.userId && renderMessageStatus(c.last_message.status, true)}
-                                                            <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
-                                                                {isSaved ? "Personal notes cloud inbox" : (c.last_message_content || (isGroup ? `${c.participants?.length || 0} members` : "No messages yet"))}
-                                                            </span>
-                                                        </p>
-                                                        {c.unread_count > 0 && (
-                                                            <div style={{ background: t.accent, color: "#ffffff", borderRadius: 10, padding: "2px 7px", fontSize: 10.5, fontWeight: "700", marginLeft: 6, flexShrink: 0 }}>
-                                                                {c.unread_count}
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-                                    {conversations.length === 0 && (
-                                        <div style={{ textAlign: "center", padding: "30px 10px", color: t.textMuted, fontSize: 11 }}>No messages yet.</div>
-                                    )}
-                                </>
-                            )}
-                        </div>
-                    </>
-                )}
-
-                {activeRailTab === "profile" && (
-                    <div style={{ padding: 20, display: "flex", flexDirection: "column", height: "100%", overflowY: "auto" }}>
-                        <h2 style={{ margin: "0 0 20px", fontSize: 20, fontWeight: "800", color: t.text }}>Profile Settings</h2>
-
-                        <form onSubmit={handleUpdateMyProfile} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                            {/* Avatar File Uploader Card */}
-                            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10, padding: "16px 0" }}>
-                                <input
-                                    type="file"
-                                    ref={avatarInputRef}
-                                    onChange={handleAvatarFileSelect}
-                                    accept="image/*"
-                                    style={{ display: "none" }}
-                                />
-                                <div
-                                    onClick={() => avatarInputRef.current?.click()}
-                                    style={{
-                                        width: 90,
-                                        height: 90,
-                                        borderRadius: "50%",
-                                        background: "linear-gradient(135deg, #38bdf8, #818cf8)",
-                                        padding: 3,
-                                        cursor: "pointer",
-                                        position: "relative",
-                                        boxShadow: "0 8px 24px rgba(0,0,0,0.2)"
-                                    }}
-                                    title="Click to change profile picture"
-                                >
-                                    <div style={{
-                                        width: "100%",
-                                        height: "100%",
-                                        borderRadius: "50%",
-                                        overflow: "hidden",
-                                        background: t.cardBg,
-                                        display: "flex",
-                                        alignItems: "center",
-                                        justifyContent: "center",
-                                        fontSize: 32,
-                                        fontWeight: 800,
-                                        color: t.accent,
-                                        position: "relative"
-                                    }}>
-                                        {myProfile.avatar_url ? (
-                                            <img src={getAssetUrl(myProfile.avatar_url)} alt="Avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                                        ) : (
-                                            myProfile.display_name?.[0]?.toUpperCase() || user?.username?.[0]?.toUpperCase() || "U"
-                                        )}
-
-                                        {isUploadingAvatar ? (
-                                            <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                                                <div className="flowchat-beacon-dot" style={{ width: 14, height: 14 }}></div>
-                                            </div>
-                                        ) : (
-                                            <div
-                                                style={{
-                                                    position: "absolute",
-                                                    inset: 0,
-                                                    background: "rgba(0,0,0,0.35)",
-                                                    opacity: 0,
-                                                    transition: "opacity 0.2s",
-                                                    display: "flex",
-                                                    alignItems: "center",
-                                                    justifyContent: "center",
-                                                    color: "white"
-                                                }}
-                                                onMouseOver={(e) => e.currentTarget.style.opacity = "1"}
-                                                onMouseOut={(e) => e.currentTarget.style.opacity = "0"}
-                                            >
-                                                <svg width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
-                                                </svg>
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
-                                <button
-                                    type="button"
-                                    onClick={() => avatarInputRef.current?.click()}
-                                    style={{
-                                        background: "rgba(120, 120, 120, 0.1)",
-                                        border: t.border,
-                                        color: t.text,
-                                        fontSize: 11,
-                                        fontWeight: 600,
-                                        padding: "6px 14px",
-                                        borderRadius: 20,
-                                        cursor: "pointer",
-                                        display: "flex",
-                                        alignItems: "center",
-                                        gap: 6
-                                    }}
-                                >
-                                    📷 Upload Photo from Device
-                                </button>
-                            </div>
-
-                            <div className="ht-form-group">
-                                <label className="ht-form-label" style={{ color: t.textMuted }}>Display Name</label>
-                                <input
-                                    type="text"
-                                    value={myProfile.display_name || ""}
-                                    onChange={(e) => setMyProfile(prev => ({ ...prev, display_name: e.target.value }))}
-                                    className="ht-form-input"
-                                    style={{ background: t.inputBg, border: t.inputBorder, color: t.text }}
-                                    placeholder="Enter your display name"
-                                    required
-                                />
-                            </div>
-
-                            <div className="ht-form-group">
-                                <label className="ht-form-label" style={{ color: t.textMuted }}>Username</label>
-                                <input
-                                    type="text"
-                                    value={myProfile.username || ""}
-                                    onChange={(e) => setMyProfile(prev => ({ ...prev, username: e.target.value }))}
-                                    className="ht-form-input"
-                                    style={{ background: t.inputBg, border: t.inputBorder, color: t.text }}
-                                    placeholder="handle_username"
-                                    required
-                                />
-                            </div>
-
-                            <div className="ht-form-group">
-                                <label className="ht-form-label" style={{ color: t.textMuted }}>Bio / About</label>
-                                <textarea
-                                    value={myProfile.bio || ""}
-                                    onChange={(e) => setMyProfile(prev => ({ ...prev, bio: e.target.value }))}
-                                    className="ht-form-textarea"
-                                    style={{ background: t.inputBg, border: t.inputBorder, color: t.text }}
-                                    placeholder="Tell others a bit about yourself..."
-                                />
-                            </div>
-
-                            <div className="ht-form-group">
-                                <label className="ht-form-label" style={{ color: t.textMuted }}>Profile Discovery</label>
-                                <div
-                                    onClick={() => setMyProfile(prev => ({ ...prev, is_public: prev.is_public !== false ? false : true }))}
-                                    style={{
-                                        display: "flex",
-                                        alignItems: "center",
-                                        justifyContent: "space-between",
-                                        background: "rgba(120, 120, 120, 0.05)",
-                                        border: t.border,
-                                        borderRadius: "12px",
-                                        padding: "12px 14px",
-                                        cursor: "pointer",
-                                        userSelect: "none"
-                                    }}
-                                >
-                                    <div>
-                                        <div style={{ fontSize: 13, fontWeight: "700", color: t.text }}>Public Search Visibility</div>
-                                        <div style={{ fontSize: 10.5, color: t.textMuted, marginTop: 2 }}>Allow users to find you via search</div>
-                                    </div>
-                                    <div style={{
-                                        width: 38,
-                                        height: 22,
-                                        borderRadius: 11,
-                                        background: (myProfile.is_public !== false) ? t.accent : "rgba(120,120,120,0.3)",
-                                        position: "relative",
-                                        transition: "background 0.2s"
-                                    }}>
-                                        <div style={{
-                                            width: 16,
-                                            height: 16,
-                                            borderRadius: "50%",
-                                            background: "white",
-                                            position: "absolute",
-                                            top: 3,
-                                            left: (myProfile.is_public !== false) ? 19 : 3,
-                                            transition: "left 0.2s"
-                                        }} />
-                                    </div>
-                                </div>
-                            </div>
-
-                            {profileSavedToast && (
-                                <div style={{
-                                    background: "rgba(34, 197, 94, 0.15)",
-                                    border: "1px solid rgba(34, 197, 94, 0.4)",
-                                    color: "#22c55e",
-                                    padding: "8px 12px",
-                                    borderRadius: 10,
-                                    fontSize: 12,
-                                    fontWeight: 700,
-                                    textAlign: "center"
-                                }}>
-                                    ✓ Profile updated successfully!
-                                </div>
-                            )}
-
-                            <button
-                                type="submit"
-                                disabled={isSavingProfile}
-                                style={{
-                                    width: "100%",
-                                    padding: "12px",
-                                    borderRadius: 12,
-                                    border: "none",
-                                    background: t.accent,
-                                    color: "white",
-                                    fontWeight: "800",
-                                    cursor: isSavingProfile ? "not-allowed" : "pointer",
-                                    marginTop: 4,
-                                    opacity: isSavingProfile ? 0.7 : 1
-                                }}
-                            >
-                                {isSavingProfile ? "Saving Changes..." : "Save Profile"}
-                            </button>
-                        </form>
-                    </div>
-                )}
-
-                {activeRailTab === "settings" && (
-                    <div style={{ padding: "24px 20px", display: "flex", flexDirection: "column", height: "100%", overflowY: "auto" }}>
-                        <div style={{ marginBottom: 24 }}>
-                            <h2 style={{ margin: 0, fontSize: 20, fontWeight: "800", color: t.text, letterSpacing: "-0.3px" }}>Settings</h2>
-                            <div style={{ fontSize: 12, color: t.textMuted, marginTop: 3 }}>Manage your client preferences & options</div>
-                        </div>
-
-                        <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-                            {/* Section 1: Appearance */}
-                            <div>
-                                <div style={{ fontSize: 11, fontWeight: 700, color: t.textMuted, letterSpacing: "0.8px", textTransform: "uppercase", marginBottom: 8 }}>
-                                    Appearance
-                                </div>
-                                <div style={{ background: t.cardBg, borderRadius: 12, border: t.border, overflow: "hidden" }}>
-                                    {/* Light Mode Radio Option */}
-                                    <div
-                                        onClick={() => {
-                                            setTheme("light");
-                                            localStorage.setItem("theme_preference", "light");
-                                        }}
-                                        style={{
-                                            padding: "14px 16px",
-                                            display: "flex",
-                                            alignItems: "center",
-                                            justifyContent: "space-between",
-                                            cursor: "pointer",
-                                            borderBottom: t.border,
-                                            background: theme === "light" ? "rgba(56, 189, 248, 0.05)" : "transparent"
-                                        }}
-                                    >
-                                        <div>
-                                            <div style={{ fontSize: 13.5, fontWeight: 700, color: t.text }}>Light Mode</div>
-                                            <div style={{ fontSize: 11, color: t.textMuted, marginTop: 2 }}>High-contrast clean theme</div>
-                                        </div>
-                                        <div style={{
-                                            width: 18,
-                                            height: 18,
-                                            borderRadius: "50%",
-                                            border: theme === "light" ? `2px solid ${t.accent}` : "2px solid rgba(140,140,140,0.4)",
-                                            display: "flex",
-                                            alignItems: "center",
-                                            justifyContent: "center",
-                                            flexShrink: 0
-                                        }}>
-                                            {theme === "light" && <div style={{ width: 8, height: 8, borderRadius: "50%", background: t.accent }} />}
-                                        </div>
-                                    </div>
-
-                                    {/* Dark Mode Radio Option */}
-                                    <div
-                                        onClick={() => {
-                                            setTheme("dark");
-                                            localStorage.setItem("theme_preference", "dark");
-                                        }}
-                                        style={{
-                                            padding: "14px 16px",
-                                            display: "flex",
-                                            alignItems: "center",
-                                            justifyContent: "space-between",
-                                            cursor: "pointer",
-                                            background: theme === "dark" ? "rgba(56, 189, 248, 0.05)" : "transparent"
-                                        }}
-                                    >
-                                        <div>
-                                            <div style={{ fontSize: 13.5, fontWeight: 700, color: t.text }}>Dark Mode</div>
-                                            <div style={{ fontSize: 11, color: t.textMuted, marginTop: 2 }}>Low-light sleek interface</div>
-                                        </div>
-                                        <div style={{
-                                            width: 18,
-                                            height: 18,
-                                            borderRadius: "50%",
-                                            border: theme === "dark" ? `2px solid ${t.accent}` : "2px solid rgba(140,140,140,0.4)",
-                                            display: "flex",
-                                            alignItems: "center",
-                                            justifyContent: "center",
-                                            flexShrink: 0
-                                        }}>
-                                            {theme === "dark" && <div style={{ width: 8, height: 8, borderRadius: "50%", background: t.accent }} />}
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* Section 2: Notifications */}
-                            <div>
-                                <div style={{ fontSize: 11, fontWeight: 700, color: t.textMuted, letterSpacing: "0.8px", textTransform: "uppercase", marginBottom: 8 }}>
-                                    Message Audio
-                                </div>
-                                <div style={{ background: t.cardBg, borderRadius: 12, border: t.border, overflow: "hidden" }}>
-                                    {/* Audio Enabled Radio */}
-                                    <div
-                                        onClick={() => soundEnabled || toggleSoundEnabled()}
-                                        style={{
-                                            padding: "14px 16px",
-                                            display: "flex",
-                                            alignItems: "center",
-                                            justifyContent: "space-between",
-                                            cursor: "pointer",
-                                            borderBottom: t.border,
-                                            background: soundEnabled ? "rgba(56, 189, 248, 0.05)" : "transparent"
-                                        }}
-                                    >
-                                        <div>
-                                            <div style={{ fontSize: 13.5, fontWeight: 700, color: t.text }}>Sound Chimes Enabled</div>
-                                            <div style={{ fontSize: 11, color: t.textMuted, marginTop: 2 }}>Play audio chime on incoming messages</div>
-                                        </div>
-                                        <div style={{
-                                            width: 18,
-                                            height: 18,
-                                            borderRadius: "50%",
-                                            border: soundEnabled ? `2px solid ${t.accent}` : "2px solid rgba(140,140,140,0.4)",
-                                            display: "flex",
-                                            alignItems: "center",
-                                            justifyContent: "center",
-                                            flexShrink: 0
-                                        }}>
-                                            {soundEnabled && <div style={{ width: 8, height: 8, borderRadius: "50%", background: t.accent }} />}
-                                        </div>
-                                    </div>
-
-                                    {/* Audio Muted Radio */}
-                                    <div
-                                        onClick={() => !soundEnabled || toggleSoundEnabled()}
-                                        style={{
-                                            padding: "14px 16px",
-                                            display: "flex",
-                                            alignItems: "center",
-                                            justifyContent: "space-between",
-                                            cursor: "pointer",
-                                            background: !soundEnabled ? "rgba(56, 189, 248, 0.05)" : "transparent"
-                                        }}
-                                    >
-                                        <div>
-                                            <div style={{ fontSize: 13.5, fontWeight: 700, color: t.text }}>Muted (Silent)</div>
-                                            <div style={{ fontSize: 11, color: t.textMuted, marginTop: 2 }}>Suppress all message audio playback</div>
-                                        </div>
-                                        <div style={{
-                                            width: 18,
-                                            height: 18,
-                                            borderRadius: "50%",
-                                            border: !soundEnabled ? `2px solid ${t.accent}` : "2px solid rgba(140,140,140,0.4)",
-                                            display: "flex",
-                                            alignItems: "center",
-                                            justifyContent: "center",
-                                            flexShrink: 0
-                                        }}>
-                                            {!soundEnabled && <div style={{ width: 8, height: 8, borderRadius: "50%", background: t.accent }} />}
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* Section 3: Privacy & System Limits */}
-                            <div>
-                                <div style={{ fontSize: 11, fontWeight: 700, color: t.textMuted, letterSpacing: "0.8px", textTransform: "uppercase", marginBottom: 8 }}>
-                                    Privacy & Storage
-                                </div>
-                                <div style={{ background: t.cardBg, borderRadius: 12, border: t.border, overflow: "hidden" }}>
-                                    <div style={{ padding: "14px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: t.border }}>
-                                        <div>
-                                            <div style={{ fontSize: 13.5, fontWeight: 700, color: t.text }}>Read Receipts</div>
-                                            <div style={{ fontSize: 11, color: t.textMuted, marginTop: 2 }}>Inform senders when their messages have been read</div>
-                                        </div>
-                                        <div style={{ fontSize: 11, fontWeight: 700, color: "#10b981", background: "rgba(16, 185, 129, 0.1)", padding: "3px 8px", borderRadius: 4 }}>
-                                            Enabled
-                                        </div>
-                                    </div>
-
-                                    <div style={{ padding: "14px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                                        <div>
-                                            <div style={{ fontSize: 13.5, fontWeight: 700, color: t.text }}>Maximum File Size</div>
-                                            <div style={{ fontSize: 11, color: t.textMuted, marginTop: 2 }}>Maximum allowed media attachment payload</div>
-                                        </div>
-                                        <div style={{ fontSize: 11, fontWeight: 700, color: t.accent, background: "rgba(56, 189, 248, 0.1)", padding: "3px 8px", borderRadius: 4 }}>
-                                            50 MB
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* Section 4: Account Actions */}
-                            <div>
-                                <div style={{ fontSize: 11, fontWeight: 700, color: t.textMuted, letterSpacing: "0.8px", textTransform: "uppercase", marginBottom: 8 }}>
-                                    Session
-                                </div>
-                                <div style={{ background: t.cardBg, borderRadius: 12, border: t.border, overflow: "hidden" }}>
-                                    <div
-                                        onClick={onLogout}
-                                        style={{
-                                            padding: "14px 16px",
-                                            display: "flex",
-                                            alignItems: "center",
-                                            justifyContent: "space-between",
-                                            cursor: "pointer"
-                                        }}
-                                    >
-                                        <div>
-                                            <div style={{ fontSize: 13.5, fontWeight: 700, color: "#ef4444" }}>Log Out</div>
-                                            <div style={{ fontSize: 11, color: t.textMuted, marginTop: 2 }}>Terminate active session on this device</div>
-                                        </div>
-                                        <svg width="18" height="18" fill="none" stroke="#ef4444" strokeWidth="2" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                                        </svg>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div style={{ marginTop: "auto", paddingTop: 28, fontSize: 11, color: t.textMuted, textAlign: "center", opacity: 0.6 }}>
-                            FlowChat Client v2.5.0
-                        </div>
-                    </div>
-                )}
-
-                {/* Resizer Handle for Left Sidebar */}
-                <div
-                    onMouseDown={(e) => {
-                        e.preventDefault();
-                        setIsResizingLeft(true);
-                    }}
-                    style={{
-                        position: "absolute",
-                        top: 0,
-                        right: 0,
-                        width: 6,
-                        height: "100%",
-                        cursor: "col-resize",
-                        zIndex: 100,
-                        background: isResizingLeft ? t.accent : "transparent"
-                    }}
-                    className="ht-drag-handle"
-                    title="Drag to resize inbox sidebar"
-                />
-            </div>
+            <ConversationList
+                leftSidebarWidth={leftSidebarWidth}
+                themeTokens={t}
+                theme={theme}
+                activeRailTab={activeRailTab}
+                syncState={syncState}
+                searchQuery={searchQuery}
+                setSearchQuery={setSearchQuery}
+                conversations={conversations}
+                isConvPinned={isConvPinned}
+                activeConv={activeConv}
+                handleSelectConversation={handleSelectConversation}
+                user={user}
+                convoTab={convoTab}
+                setConvoTab={setConvoTab}
+                isSearching={isSearching}
+                searchResults={searchResults}
+                handleStartConversation={handleStartConversation}
+                setIsCreateGroupOpen={setIsCreateGroupOpen}
+                myProfile={myProfile}
+                setMyProfile={setMyProfile}
+                handleUpdateMyProfile={handleUpdateMyProfile}
+                avatarInputRef={avatarInputRef}
+                handleAvatarFileSelect={handleAvatarFileSelect}
+                isUploadingAvatar={isUploadingAvatar}
+                profileSavedToast={profileSavedToast}
+                isSavingProfile={isSavingProfile}
+                setTheme={setTheme}
+                soundEnabled={soundEnabled}
+                toggleSoundEnabled={toggleSoundEnabled}
+                onLogout={onLogout}
+                setIsResizingLeft={setIsResizingLeft}
+                isResizingLeft={isResizingLeft}
+                typingUsers={typingUsers}
+            />
 
             {/* 3. Center Messaging Pane */}
-            <div className="ht-chat-pane">
-                {activeConv ? (
-                    <>
-                        {/* Floating Header Card */}
-                        <div className="ht-chat-header" style={{ background: t.cardBg, border: t.border, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-                            {isInChatSearchOpen ? (
-                                <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, background: "rgba(120, 120, 120, 0.08)", padding: "6px 14px", borderRadius: 20, border: `1px solid ${t.accent}` }}>
-                                    <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" style={{ flexShrink: 0, opacity: 0.7 }}>
-                                        <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                                    </svg>
-                                    <input
-                                        type="text"
-                                        placeholder="Search in this conversation..."
-                                        value={inChatSearchQuery}
-                                        onChange={(e) => {
-                                            setInChatSearchQuery(e.target.value);
-                                            setInChatSearchMatchIndex(0);
-                                        }}
-                                        autoFocus
-                                        style={{
-                                            flex: 1,
-                                            background: "transparent",
-                                            border: "none",
-                                            outline: "none",
-                                            color: t.text,
-                                            fontSize: 13,
-                                            fontWeight: 500
-                                        }}
-                                    />
-                                    {inChatSearchQuery.trim() && (
-                                        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: t.textMuted }}>
-                                            <span style={{ fontSize: 11, fontWeight: 700 }}>
-                                                {searchMatchingMessages.length > 0
-                                                    ? `${inChatSearchMatchIndex + 1}/${searchMatchingMessages.length}`
-                                                    : "0/0"}
-                                            </span>
-                                            <button
-                                                type="button"
-                                                onClick={handlePrevSearchMatch}
-                                                disabled={searchMatchingMessages.length === 0}
-                                                style={{ background: "none", border: "none", color: t.text, cursor: "pointer", opacity: searchMatchingMessages.length ? 1 : 0.3, padding: "2px 4px" }}
-                                                title="Previous Match"
-                                            >
-                                                ▲
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={handleNextSearchMatch}
-                                                disabled={searchMatchingMessages.length === 0}
-                                                style={{ background: "none", border: "none", color: t.text, cursor: "pointer", opacity: searchMatchingMessages.length ? 1 : 0.3, padding: "2px 4px" }}
-                                                title="Next Match"
-                                            >
-                                                ▼
-                                            </button>
-                                        </div>
-                                    )}
-                                    <button
-                                        type="button"
-                                        onClick={() => {
-                                            setIsInChatSearchOpen(false);
-                                            setInChatSearchQuery("");
-                                            setInChatSearchMatchIndex(0);
-                                        }}
-                                        style={{ background: "none", border: "none", color: t.textMuted, cursor: "pointer", padding: "2px 4px", fontSize: 13, fontWeight: 700 }}
-                                        title="Close Search"
-                                    >
-                                        ✕
-                                    </button>
-                                </div>
-                            ) : (
-                                <div
-                                    onClick={() => {
-                                        if (activeConv.type === "group") {
-                                            setEditGroupTitle(activeConv.title || activeConv.display_name || "");
-                                            setEditGroupAvatarUrl(activeConv.avatar_url || "");
-                                            setIsGroupInfoOpen(true);
-                                        } else {
-                                            setShowInspector(prev => !prev);
-                                        }
-                                    }}
-                                    style={{ cursor: "pointer" }}
-                                    title={activeConv.type === "group" ? "Click to view group info & settings" : "Click to toggle details panel"}
-                                >
-                                    <h3 style={{ margin: 0, fontSize: 16, color: t.text, fontWeight: 800, display: "flex", alignItems: "center", gap: 6 }}>
-                                        {activeConv.display_name}
-                                        {activeConv.type === "group" && (
-                                            <span
-                                                title="Group Chat"
-                                                style={{
-                                                    display: "inline-flex",
-                                                    alignItems: "center",
-                                                    justifyContent: "center",
-                                                    background: "rgba(56,189,248,0.18)",
-                                                    color: "#38bdf8",
-                                                    width: 26,
-                                                    height: 26,
-                                                    borderRadius: "50%",
-                                                    flexShrink: 0
-                                                }}
-                                            >
-                                                <svg width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                                                </svg>
-                                            </span>
-                                        )}
-                                    </h3>
-                                    <span style={{
-                                        fontSize: 11,
-                                        color: getActiveTypingLabel() ? t.accent : (activeConv.other_participant?.status === "online" ? "#34A853" : t.textMuted),
-                                        height: 14,
-                                        display: "block"
-                                    }}>
-                                        {getActiveTypingLabel() ||
-                                            (activeConv.type === "group"
-                                                ? `${activeConv.participants?.length || 0} members`
-                                                : (!activeConv.other_participant
-                                                    ? "personal cloud storage"
-                                                    : (activeConv.other_participant.status === "online"
-                                                        ? "online"
-                                                        : formatLastSeen(activeConv.other_participant.last_seen))))}
-                                    </span>
-                                </div>
-                            )}
+            <ChatArea
+                activeConv={activeConv}
+                theme={theme}
+                themeTokens={t}
+                isInChatSearchOpen={isInChatSearchOpen}
+                setIsInChatSearchOpen={setIsInChatSearchOpen}
+                inChatSearchQuery={inChatSearchQuery}
+                setInChatSearchQuery={setInChatSearchQuery}
+                inChatSearchMatchIndex={inChatSearchMatchIndex}
+                setInChatSearchMatchIndex={setInChatSearchMatchIndex}
+                searchMatchingMessages={searchMatchingMessages}
+                handlePrevSearchMatch={handlePrevSearchMatch}
+                handleNextSearchMatch={handleNextSearchMatch}
+                setEditGroupTitle={setEditGroupTitle}
+                setEditGroupAvatarUrl={setEditGroupAvatarUrl}
+                setIsGroupInfoOpen={setIsGroupInfoOpen}
+                setShowInspector={setShowInspector}
+                showInspector={showInspector}
+                getActiveTypingLabel={getActiveTypingLabel}
+                headerMenuRef={headerMenuRef}
+                isHeaderMenuOpen={isHeaderMenuOpen}
+                setIsHeaderMenuOpen={setIsHeaderMenuOpen}
+                togglePinConversation={togglePinConversation}
+                isConvPinned={isConvPinned}
+                toggleMuteConversation={toggleMuteConversation}
+                mutedConvIds={mutedConvIds}
+                pinnedMessageIdMap={pinnedMessageIdMap}
+                pinnedMessagesMap={pinnedMessagesMap}
+                handleUnpin={handleUnpin}
+                messages={messages}
+                user={user}
+                handleTogglePin={handleTogglePin}
+                chatContainerRef={chatContainerRef}
+                handleChatScroll={handleChatScroll}
+                handleCloseContextMenu={handleCloseContextMenu}
+                handlePaste={handlePaste}
+                hoveredMsgId={hoveredMsgId}
+                setHoveredMsgId={setHoveredMsgId}
+                myProfile={myProfile}
+                handleContextMenu={handleContextMenu}
+                handleToggleReaction={handleToggleReaction}
+                showScrollBottomBtn={showScrollBottomBtn}
+                newMessagesBelowCount={newMessagesBelowCount}
+                scrollToBottom={scrollToBottom}
+                contextMenu={contextMenu}
+                REACTION_EMOJIS={REACTION_EMOJIS}
+                handleStartReply={handleStartReply}
+                handleCopyMsgText={handleCopyMsgText}
+                handleCopyImage={handleCopyImage}
+                handleStartEdit={handleStartEdit}
+                handleDeleteMsg={handleDeleteMsg}
+                handleSendMessage={handleSendMessage}
+                replyingTo={replyingTo}
+                setReplyingTo={setReplyingTo}
+                editingMessage={editingMessage}
+                setEditingMessage={setEditingMessage}
+                setMessageText={setMessageText}
+                selectedFile={selectedFile}
+                filePreview={filePreview}
+                cancelAttachment={cancelAttachment}
+                isUploading={isUploading}
+                setIsUploading={setIsUploading}
+                uploadProgress={uploadProgress}
+                fileInputRef={fileInputRef}
+                inputTextareaRef={inputTextareaRef}
+                messageText={messageText}
+                handleKeyPress={handleKeyPress}
+                emojiPickerRef={emojiPickerRef}
+                showEmojiPicker={showEmojiPicker}
+                setShowEmojiPicker={setShowEmojiPicker}
+                isRecording={isRecording}
+                setIsRecording={setIsRecording}
+                mediaRecorderRef={mediaRecorderRef}
+                audioStreamRef={audioStreamRef}
+                recordingTimerRef={recordingTimerRef}
+                recordingSeconds={recordingSeconds}
+                setRecordingSeconds={setRecordingSeconds}
+                audioChunksRef={audioChunksRef}
+                socketRef={socketRef}
+                setMessages={setMessages}
+                handleFileSelect={handleFileSelect}
+                messageEndRef={messageEndRef}
+                API_BASE={API_BASE}
+            />
 
-                            <div className="ht-header-actions" style={{ display: "flex", alignItems: "center", gap: 8, position: "relative" }}>
-                                {!isInChatSearchOpen && (
-                                    <button
-                                        className="ht-action-circle-btn"
-                                        style={{ color: isInChatSearchOpen ? (theme === "dark" ? "#38bdf8" : "#0284c7") : t.text }}
-                                        onClick={() => {
-                                            setIsInChatSearchOpen(true);
-                                            setInChatSearchQuery("");
-                                            setInChatSearchMatchIndex(0);
-                                        }}
-                                        title="Search Messages in Chat"
-                                    >
-                                        <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                                        </svg>
-                                    </button>
-                                )}
-                                <button
-                                    className="ht-action-circle-btn"
-                                    style={{ color: showInspector ? (theme === "dark" ? "#38bdf8" : "#0284c7") : t.text }}
-                                    onClick={() => setShowInspector(prev => !prev)}
-                                    title="Toggle Conversation Inspector"
-                                >
-                                    <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                    </svg>
-                                </button>
-
-                                {/* Conversation Options Dropdown (Pin / Mute / Group Info) */}
-                                <div ref={headerMenuRef} style={{ position: "relative" }}>
-                                    <button
-                                        className="ht-action-circle-btn"
-                                        style={{ color: isHeaderMenuOpen ? (theme === "dark" ? "#38bdf8" : "#0284c7") : t.text }}
-                                        onClick={() => setIsHeaderMenuOpen(prev => !prev)}
-                                        title="Conversation Options"
-                                    >
-                                        <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
-                                        </svg>
-                                    </button>
-
-                                    {isHeaderMenuOpen && (
-                                        <div style={{
-                                            position: "absolute",
-                                            top: 40,
-                                            right: 0,
-                                            width: 175,
-                                            background: t.cardBg,
-                                            border: t.border,
-                                            borderRadius: 12,
-                                            boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
-                                            zIndex: 100,
-                                            padding: 6,
-                                            backdropFilter: "blur(12px)"
-                                        }}>
-                                            {activeConv.type === "group" && (
-                                                <button
-                                                    type="button"
-                                                    onClick={() => {
-                                                        setEditGroupTitle(activeConv.title || activeConv.display_name || "");
-                                                        setEditGroupAvatarUrl(activeConv.avatar_url || "");
-                                                        setIsGroupInfoOpen(true);
-                                                        setIsHeaderMenuOpen(false);
-                                                    }}
-                                                    style={{
-                                                        width: "100%",
-                                                        padding: "8px 12px",
-                                                        background: "none",
-                                                        border: "none",
-                                                        color: t.text,
-                                                        fontSize: 13,
-                                                        fontWeight: 500,
-                                                        borderRadius: 8,
-                                                        cursor: "pointer",
-                                                        textAlign: "left",
-                                                        marginBottom: 2
-                                                    }}
-                                                    onMouseEnter={(e) => e.currentTarget.style.background = "rgba(120, 120, 120, 0.1)"}
-                                                    onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                                                >
-                                                    Group Info & Settings
-                                                </button>
-                                            )}
-                                            <button
-                                                type="button"
-                                                onClick={() => {
-                                                    togglePinConversation(activeConv.id);
-                                                    setIsHeaderMenuOpen(false);
-                                                }}
-                                                style={{
-                                                    width: "100%",
-                                                    padding: "8px 12px",
-                                                    background: "none",
-                                                    border: "none",
-                                                    color: t.text,
-                                                    fontSize: 13,
-                                                    fontWeight: 500,
-                                                    borderRadius: 8,
-                                                    cursor: "pointer",
-                                                    textAlign: "left",
-                                                    marginBottom: 2
-                                                }}
-                                                onMouseEnter={(e) => e.currentTarget.style.background = "rgba(120, 120, 120, 0.1)"}
-                                                onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                                            >
-                                                {isConvPinned(activeConv) ? "Unpin Chat" : "Pin Chat"}
-                                            </button>
-
-                                            <button
-                                                type="button"
-                                                onClick={() => {
-                                                    toggleMuteConversation(activeConv.id);
-                                                    setIsHeaderMenuOpen(false);
-                                                }}
-                                                style={{
-                                                    width: "100%",
-                                                    padding: "8px 12px",
-                                                    background: "none",
-                                                    border: "none",
-                                                    color: t.text,
-                                                    fontSize: 13,
-                                                    fontWeight: 500,
-                                                    borderRadius: 8,
-                                                    cursor: "pointer",
-                                                    textAlign: "left"
-                                                }}
-                                                onMouseEnter={(e) => e.currentTarget.style.background = "rgba(120, 120, 120, 0.1)"}
-                                                onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                                            >
-                                                {(Array.isArray(mutedConvIds) ? mutedConvIds.includes(activeConv.id) : mutedConvIds?.[activeConv.id]) ? "Unmute Notifications" : "Mute Notifications"}
-                                            </button>
-                                        </div>
-                                    )}
-                                </div>
-
-
-                            </div>
-                        </div>
-
-                        {/* Pinned Message Banner */}
-                        {pinnedMessageIdMap[activeConv?.id] && (() => {
-                            const pinnedMsgId = pinnedMessageIdMap[activeConv.id];
-                            const pinnedMsg = messages.find(m => (m.id || m.message_id) === pinnedMsgId);
-                            if (!pinnedMsg) return null;
-                            const isSelf = pinnedMsg.sender_id === user.userId;
-                            const senderPart = (activeConv?.participants || []).find(p => (p.user_id || p.id) === pinnedMsg.sender_id);
-                            const senderTitle = isSelf ? "You" : (pinnedMsg.sender_name || senderPart?.display_name || senderPart?.username || activeConv.display_name || "Participant");
-                            return (
-                                <div
-                                    style={{
-                                        display: "flex",
-                                        alignItems: "center",
-                                        justifyContent: "space-between",
-                                        padding: "8px 16px",
-                                        background: "rgba(3, 52, 110, 0.08)",
-                                        backdropFilter: "blur(8px)",
-                                        borderBottom: t.border,
-                                        cursor: "pointer",
-                                        zIndex: 10
-                                    }}
-                                    onClick={() => {
-                                        const el = document.getElementById(`msg-${pinnedMsgId}`);
-                                        if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
-                                    }}
-                                >
-                                    <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-                                        <svg width="16" height="16" fill={t.accent} viewBox="0 0 24 24" style={{ flexShrink: 0 }}>
-                                            <path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5v6l1 1 1-1v-6h5v-2l-2-2z" />
-                                        </svg>
-                                        <div style={{ minWidth: 0 }}>
-                                            <div style={{ fontSize: 11, fontWeight: 700, color: t.accent }}>Pinned Message • {senderTitle}</div>
-                                            <div style={{ fontSize: 12, color: t.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                                                {pinnedMsg.content || (pinnedMsg.message_type === "image" ? "📷 Image" : "Attachment")}
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <button
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleTogglePin(pinnedMsg);
-                                        }}
-                                        style={{
-                                            background: "none",
-                                            border: "none",
-                                            color: t.textMuted,
-                                            cursor: "pointer",
-                                            padding: 4,
-                                            display: "flex",
-                                            alignItems: "center"
-                                        }}
-                                        title="Unpin Message"
-                                    >
-                                        ✕
-                                    </button>
-                                </div>
-                            );
-                        })()}
-
-                        {/* Interactive Scroll Pane */}
-                        <div className="ht-message-stream" ref={chatContainerRef} onScroll={handleChatScroll} onClick={handleCloseContextMenu} onPaste={handlePaste} style={{ position: "relative" }}>
-                            {messages.map(m => {
-                                const isSelf = m.sender_id === user.userId;
-                                const parentMsg = m.reply_to_id ? messages.find(msg => (msg.id || msg.message_id) === m.reply_to_id) : null;
-                                const isSearchMatched = inChatSearchQuery.trim() && m.content?.toLowerCase().includes(inChatSearchQuery.toLowerCase());
-                                const isCurrentSearchMatch = isSearchMatched && searchMatchingMessages[inChatSearchMatchIndex]?.id === (m.id || m.message_id);
-
-                                return (
-                                    <div
-                                        id={`msg-${m.id || m.message_id}`}
-                                        key={m.id || m.message_id}
-                                        className={`ht-msg-row ${isSelf ? "self" : "recv"}`}
-                                        onMouseEnter={() => setHoveredMsgId(m.id || m.message_id)}
-                                        onMouseLeave={() => setHoveredMsgId(null)}
-                                        style={{ position: "relative" }}
-                                    >
-                                        <div className="ht-msg-avatar">
-                                            {isSelf ? (
-                                                myProfile.avatar_url ? (
-                                                    <img src={myProfile.avatar_url} alt="" style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} />
-                                                ) : (
-                                                    user?.username?.[0]?.toUpperCase() || "U"
-                                                )
-                                            ) : (
-                                                (() => {
-                                                    const senderPart = (activeConv?.participants || []).find(p => (p.user_id || p.id) === m.sender_id);
-                                                    const avatarUrl = m.sender_avatar || senderPart?.avatar_url;
-                                                    const nameForInitial = m.sender_name || senderPart?.display_name || senderPart?.username || activeConv?.display_name || "P";
-                                                    return avatarUrl ? (
-                                                        <img src={avatarUrl} alt="" style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} />
-                                                    ) : (
-                                                        nameForInitial[0]?.toUpperCase() || "@"
-                                                    );
-                                                })()
-                                            )}
-                                        </div>
-                                        <div className="ht-msg-bubble-box" style={{ position: "relative" }}>
-
-                                            <div
-                                                className="ht-msg-bubble"
-                                                onContextMenu={(e) => handleContextMenu(e, m)}
-                                                style={{
-                                                    background: isSelf ? t.bubbleSent : t.bubbleRecv,
-                                                    color: isSelf ? t.bubbleSentText : t.bubbleRecvText,
-                                                    padding: m.message_type === "image" ? "6px" : "12px 16px",
-                                                    cursor: "context-menu",
-                                                    border: isCurrentSearchMatch ? "2px solid #EAB308" : (isSearchMatched ? "1.5px solid rgba(234, 179, 8, 0.6)" : "1px solid transparent"),
-                                                    boxShadow: isCurrentSearchMatch ? "0 0 16px rgba(234, 179, 8, 0.5)" : "none",
-                                                    transition: "all 0.2s ease"
-                                                }}
-                                            >
-                                                {activeConv.type === "group" && !isSelf && (
-                                                    <div style={{
-                                                        fontSize: "11.5px",
-                                                        fontWeight: "800",
-                                                        color: getSenderNameColor(m.sender_id),
-                                                        marginBottom: "4px",
-                                                        letterSpacing: "0.2px"
-                                                    }}>
-                                                        {(() => {
-                                                            const senderPart = (activeConv?.participants || []).find(p => (p.user_id || p.id) === m.sender_id);
-                                                            return m.sender_name || senderPart?.display_name || senderPart?.username || "Participant";
-                                                        })()}
-                                                    </div>
-                                                )}
-                                                {m.reply_to_id && (
-                                                    <div
-                                                        style={{
-                                                            borderLeft: `3px solid ${isSelf ? "#ffffff" : t.accent}`,
-                                                            background: "rgba(0, 0, 0, 0.15)",
-                                                            padding: "4px 8px",
-                                                            borderRadius: "4px",
-                                                            fontSize: "11px",
-                                                            marginBottom: "6px",
-                                                            cursor: "pointer"
-                                                        }}
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            const el = document.getElementById(`msg-${m.reply_to_id}`);
-                                                            if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
-                                                        }}
-                                                    >
-                                                        <div style={{ fontWeight: 700, fontSize: "10px", opacity: 0.9 }}>
-                                                            Replying to message
-                                                        </div>
-                                                        <div style={{ opacity: 0.85, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap", maxWidth: "200px" }}>
-                                                            {parentMsg?.content || "Quoted attachment"}
-                                                        </div>
-                                                    </div>
-                                                )}
-
-                                                {m.message_type === "image" ? (
-                                                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                                                        <img
-                                                            src={getAssetUrl(m.media_url)}
-                                                            alt="Attachment"
-                                                            style={{ maxWidth: "260px", maxHeight: "260px", borderRadius: 10, objectFit: "cover", cursor: "pointer" }}
-                                                            onClick={() => window.open(getAssetUrl(m.media_url), "_blank")}
-                                                        />
-                                                        {m.content && m.content !== m.media_url?.split("/").pop() && (
-                                                            <div style={{ padding: "4px 8px 2px", fontSize: 13, color: isSelf ? t.bubbleSentText : t.bubbleRecvText }}>{m.content}</div>
-                                                        )}
-                                                    </div>
-                                                ) : m.message_type === "audio" ? (
-                                                    <VoicePlayer
-                                                        src={getAssetUrl(m.media_url)}
-                                                        isSelf={isSelf}
-                                                        themeColors={t}
-                                                    />
-                                                ) : m.message_type === "file" ? (
-                                                    <a
-                                                        href={getAssetUrl(m.media_url)}
-                                                        target="_blank"
-                                                        rel="noopener noreferrer"
-                                                        style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none", color: "inherit" }}
-                                                    >
-                                                        <div style={{ width: 34, height: 34, borderRadius: 8, background: "rgba(120, 120, 120, 0.15)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                                                            <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                                                                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                                            </svg>
-                                                        </div>
-                                                        <div style={{ minWidth: 0 }}>
-                                                            <div style={{ fontSize: 13, fontWeight: "700", textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap", maxWidth: "180px" }}>{m.content}</div>
-                                                            <div style={{ fontSize: 10, opacity: 0.6 }}>Attached File</div>
-                                                        </div>
-                                                    </a>
-                                                ) : (
-                                                    m.content
-                                                )}
-                                            </div>
-
-                                            {/* Reaction Badges */}
-                                            {m.reactions && Object.keys(m.reactions).length > 0 && (
-                                                <div style={{
-                                                    display: "flex",
-                                                    flexWrap: "wrap",
-                                                    gap: "4px",
-                                                    marginTop: "4px",
-                                                    justifyContent: isSelf ? "flex-end" : "flex-start"
-                                                }}>
-                                                    {Object.entries(m.reactions).map(([emoji, uids]) => {
-                                                        const hasReacted = uids.includes(user.userId);
-                                                        return (
-                                                            <button
-                                                                key={emoji}
-                                                                type="button"
-                                                                onClick={(e) => {
-                                                                    e.stopPropagation();
-                                                                    handleToggleReaction(m, emoji);
-                                                                }}
-                                                                style={{
-                                                                    background: hasReacted ? "rgba(99, 102, 241, 0.25)" : "rgba(0, 0, 0, 0.2)",
-                                                                    border: hasReacted ? "1px solid #6366f1" : "1px solid transparent",
-                                                                    borderRadius: "12px",
-                                                                    padding: "2px 6px",
-                                                                    fontSize: "12px",
-                                                                    cursor: "pointer",
-                                                                    display: "flex",
-                                                                    alignItems: "center",
-                                                                    gap: "4px",
-                                                                    color: isSelf ? t.bubbleSentText : t.bubbleRecvText,
-                                                                    transition: "all 0.15s ease"
-                                                                }}
-                                                                title={`${uids.length} reaction${uids.length > 1 ? "s" : ""}`}
-                                                            >
-                                                                <span>{emoji}</span>
-                                                                <span style={{ fontSize: "10.5px", fontWeight: "700" }}>{uids.length}</span>
-                                                            </button>
-                                                        );
-                                                    })}
-                                                </div>
-                                            )}
-
-                                            <span style={{ fontSize: 9.5, color: t.textMuted, marginTop: 4, display: "flex", alignItems: "center", gap: 4 }}>
-                                                {formatTime(m.created_at)}
-                                                {m.is_edited && <span style={{ fontStyle: "italic", opacity: 0.7 }}>(edited)</span>}
-                                                {isSelf && renderMessageStatus(m.status, false)}
-                                            </span>
-                                        </div>
-                                    </div>
-                                );
-                            })}
-
-                            {/* Animated Typing Indicator Bubble */}
-                            {getActiveTypingLabel() && (
-                                <div className="ht-msg-row recv" style={{ position: "relative", marginBottom: 12, marginTop: 4 }}>
-                                    <div className="ht-msg-avatar" style={{ background: "linear-gradient(135deg, #6366f1, #38bdf8)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 800, fontSize: 11 }}>
-                                        💬
-                                    </div>
-                                    <div className="ht-msg-bubble-box">
-                                        <div
-                                            className="ht-msg-bubble"
-                                            style={{
-                                                background: t.bubbleRecv,
-                                                color: t.bubbleRecvText,
-                                                padding: "8px 14px",
-                                                borderRadius: "18px",
-                                                borderTopLeftRadius: "4px",
-                                                display: "inline-flex",
-                                                alignItems: "center",
-                                                gap: 8,
-                                                boxShadow: "0 2px 8px rgba(0,0,0,0.08)"
-                                            }}
-                                        >
-                                            <span style={{ fontSize: 12, fontWeight: 700, color: theme === "dark" ? "#38bdf8" : t.accent }}>
-                                                {getActiveTypingLabel()}
-                                            </span>
-                                            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                                                <span style={{ width: 6, height: 6, borderRadius: "50%", background: theme === "dark" ? "#38bdf8" : t.accent, animation: "typingBounce 1.4s infinite ease-in-out both", animationDelay: "0s" }} />
-                                                <span style={{ width: 6, height: 6, borderRadius: "50%", background: theme === "dark" ? "#38bdf8" : t.accent, animation: "typingBounce 1.4s infinite ease-in-out both", animationDelay: "0.2s" }} />
-                                                <span style={{ width: 6, height: 6, borderRadius: "50%", background: theme === "dark" ? "#38bdf8" : t.accent, animation: "typingBounce 1.4s infinite ease-in-out both", animationDelay: "0.4s" }} />
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
-
-                            <div ref={messageEndRef} />
-                        </div>
-
-                        {/* Floating Scroll to Bottom / New Messages Pill Button */}
-                        {showScrollBottomBtn && (
-                            <button
-                                type="button"
-                                onClick={() => scrollToBottom(true)}
-                                style={{
-                                    position: "absolute",
-                                    bottom: 84,
-                                    right: 28,
-                                    background: t.accent,
-                                    color: "#ffffff",
-                                    border: "none",
-                                    borderRadius: 30,
-                                    padding: "8px 16px",
-                                    display: "flex",
-                                    alignItems: "center",
-                                    gap: 8,
-                                    cursor: "pointer",
-                                    boxShadow: "0 6px 20px rgba(0, 0, 0, 0.35)",
-                                    fontSize: 12,
-                                    fontWeight: "700",
-                                    zIndex: 50,
-                                    transition: "all 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275)"
-                                }}
-                            >
-                                <span>{newMessagesBelowCount > 0 ? `${newMessagesBelowCount} new ${newMessagesBelowCount === 1 ? "message" : "messages"}` : "Latest messages"}</span>
-                                <svg width="14" height="14" fill="currentColor" viewBox="0 0 24 24">
-                                    <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z" />
-                                </svg>
-                            </button>
-                        )}
-
-                        {/* Right-Click Message Context Menu */}
-                        {contextMenu && (
-                            <div
-                                style={{
-                                    position: "fixed",
-                                    top: Math.min(contextMenu.y, window.innerHeight - 280),
-                                    left: Math.min(contextMenu.x, window.innerWidth - 200),
-                                    zIndex: 10000,
-                                    background: "rgba(20, 25, 35, 0.96)",
-                                    backdropFilter: "blur(14px)",
-                                    border: "1px solid rgba(255, 255, 255, 0.12)",
-                                    borderRadius: "14px",
-                                    boxShadow: "0 12px 36px rgba(0, 0, 0, 0.5)",
-                                    padding: "8px",
-                                    minWidth: "180px",
-                                    display: "flex",
-                                    flexDirection: "column",
-                                    gap: "4px"
-                                }}
-                                onClick={(e) => e.stopPropagation()}
-                            >
-                                {/* Quick Emoji Reactions Header */}
-                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "4px 2px 8px", borderBottom: "1px solid rgba(255, 255, 255, 0.1)" }}>
-                                    {REACTION_EMOJIS.map(emoji => (
-                                        <button
-                                            key={emoji}
-                                            type="button"
-                                            onClick={() => handleToggleReaction(contextMenu.message, emoji)}
-                                            style={{
-                                                background: "none",
-                                                border: "none",
-                                                fontSize: "18px",
-                                                cursor: "pointer",
-                                                padding: "4px",
-                                                borderRadius: "8px",
-                                                transition: "transform 0.15s ease"
-                                            }}
-                                            onMouseEnter={(e) => e.currentTarget.style.transform = "scale(1.25)"}
-                                            onMouseLeave={(e) => e.currentTarget.style.transform = "scale(1)"}
-                                        >
-                                            {emoji}
-                                        </button>
-                                    ))}
-                                </div>
-
-                                <button
-                                    type="button"
-                                    onClick={() => handleStartReply(contextMenu.message)}
-                                    style={{
-                                        background: "transparent",
-                                        border: "none",
-                                        color: "#ffffff",
-                                        padding: "8px 12px",
-                                        borderRadius: "8px",
-                                        fontSize: "13px",
-                                        display: "flex",
-                                        alignItems: "center",
-                                        gap: "10px",
-                                        cursor: "pointer",
-                                        textAlign: "left"
-                                    }}
-                                    onMouseOver={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.1)"}
-                                    onMouseOut={(e) => e.currentTarget.style.background = "transparent"}
-                                >
-                                    Reply
-                                </button>
-
-                                <button
-                                    type="button"
-                                    onClick={() => handleTogglePin(contextMenu.message)}
-                                    style={{
-                                        background: "transparent",
-                                        border: "none",
-                                        color: "#ffffff",
-                                        padding: "8px 12px",
-                                        borderRadius: "8px",
-                                        fontSize: "13px",
-                                        display: "flex",
-                                        alignItems: "center",
-                                        gap: "10px",
-                                        cursor: "pointer",
-                                        textAlign: "left"
-                                    }}
-                                    onMouseOver={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.1)"}
-                                    onMouseOut={(e) => e.currentTarget.style.background = "transparent"}
-                                >
-                                    {pinnedMessageIdMap[activeConv?.id] === (contextMenu.message.id || contextMenu.message.message_id) ? "Unpin Message" : "Pin Message"}
-                                </button>
-
-                                {contextMenu.message.content && (
-                                    <button
-                                        type="button"
-                                        onClick={() => handleCopyMsgText(contextMenu.message)}
-                                        style={{
-                                            background: "transparent",
-                                            border: "none",
-                                            color: "#ffffff",
-                                            padding: "8px 12px",
-                                            borderRadius: "8px",
-                                            fontSize: "13px",
-                                            display: "flex",
-                                            alignItems: "center",
-                                            gap: "10px",
-                                            cursor: "pointer",
-                                            textAlign: "left"
-                                        }}
-                                        onMouseOver={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.1)"}
-                                        onMouseOut={(e) => e.currentTarget.style.background = "transparent"}
-                                    >
-                                        Copy Text
-                                    </button>
-                                )}
-
-                                {contextMenu.message.message_type === "image" && (
-                                    <button
-                                        type="button"
-                                        onClick={() => handleCopyImage(contextMenu.message)}
-                                        style={{
-                                            background: "transparent",
-                                            border: "none",
-                                            color: "#ffffff",
-                                            padding: "8px 12px",
-                                            borderRadius: "8px",
-                                            fontSize: "13px",
-                                            display: "flex",
-                                            alignItems: "center",
-                                            gap: "10px",
-                                            cursor: "pointer",
-                                            textAlign: "left"
-                                        }}
-                                        onMouseOver={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.1)"}
-                                        onMouseOut={(e) => e.currentTarget.style.background = "transparent"}
-                                    >
-                                        Copy Image
-                                    </button>
-                                )}
-
-                                {contextMenu.message.sender_id === user.userId && contextMenu.message.message_type === "text" && (
-                                    <button
-                                        type="button"
-                                        onClick={() => handleStartEdit(contextMenu.message)}
-                                        style={{
-                                            background: "transparent",
-                                            border: "none",
-                                            color: "#ffffff",
-                                            padding: "8px 12px",
-                                            borderRadius: "8px",
-                                            fontSize: "13px",
-                                            display: "flex",
-                                            alignItems: "center",
-                                            gap: "10px",
-                                            cursor: "pointer",
-                                            textAlign: "left"
-                                        }}
-                                        onMouseOver={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.1)"}
-                                        onMouseOut={(e) => e.currentTarget.style.background = "transparent"}
-                                    >
-                                        Edit Message
-                                    </button>
-                                )}
-
-                                {contextMenu.message.sender_id === user.userId && (
-                                    <button
-                                        type="button"
-                                        onClick={() => handleDeleteMsg(contextMenu.message)}
-                                        style={{
-                                            background: "transparent",
-                                            border: "none",
-                                            color: "#ef4444",
-                                            padding: "8px 12px",
-                                            borderRadius: "8px",
-                                            fontSize: "13px",
-                                            display: "flex",
-                                            alignItems: "center",
-                                            gap: "10px",
-                                            cursor: "pointer",
-                                            textAlign: "left",
-                                            fontWeight: 600
-                                        }}
-                                        onMouseOver={(e) => e.currentTarget.style.background = "rgba(239, 68, 68, 0.15)"}
-                                        onMouseOut={(e) => e.currentTarget.style.background = "transparent"}
-                                    >
-                                        Delete Message
-                                    </button>
-                                )}
-                            </div>
-                        )}
-
-                        {/* Floating Rounded Input Card */}
-                        <form className="ht-chat-input-form" onSubmit={handleSendMessage}>
-                            {replyingTo && (
-                                <div style={{
-                                    padding: "8px 14px",
-                                    marginBottom: 8,
-                                    background: "rgba(56, 189, 248, 0.12)",
-                                    borderLeft: `4px solid ${t.accent}`,
-                                    borderRadius: "10px",
-                                    display: "flex",
-                                    alignItems: "center",
-                                    justifyContent: "space-between",
-                                    fontSize: "12px"
-                                }}>
-                                    <div>
-                                        <span style={{ fontWeight: 700, color: t.accent }}>Replying to {replyingTo.senderName}: </span>
-                                        <span style={{ color: t.text, opacity: 0.85 }}>{replyingTo.content}</span>
-                                    </div>
-                                    <button type="button" onClick={() => setReplyingTo(null)} style={{ background: "none", border: "none", color: t.textMuted, cursor: "pointer", fontSize: "14px", fontWeight: "bold" }}>✕</button>
-                                </div>
-                            )}
-
-                            {editingMessage && (
-                                <div style={{
-                                    padding: "8px 14px",
-                                    marginBottom: 8,
-                                    background: "rgba(234, 179, 8, 0.12)",
-                                    borderLeft: "4px solid #eab308",
-                                    borderRadius: "10px",
-                                    display: "flex",
-                                    alignItems: "center",
-                                    justifyContent: "space-between",
-                                    fontSize: "12px"
-                                }}>
-                                    <div>
-                                        <span style={{ fontWeight: 700, color: "#eab308" }}>Editing message</span>
-                                    </div>
-                                    <button type="button" onClick={() => { setEditingMessage(null); setMessageText(""); }} style={{ background: "none", border: "none", color: t.textMuted, cursor: "pointer", fontSize: "14px", fontWeight: "bold" }}>✕</button>
-                                </div>
-                            )}
-
-                            {selectedFile && (
-                                <div style={{
-                                    background: t.cardBg,
-                                    border: t.border,
-                                    borderRadius: 14,
-                                    padding: "8px 12px",
-                                    marginBottom: 8,
-                                    display: "flex",
-                                    alignItems: "center",
-                                    justifyContent: "space-between",
-                                    gap: 12,
-                                    boxShadow: "0 4px 12px rgba(0,0,0,0.05)"
-                                }}>
-                                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                                        {filePreview ? (
-                                            <img src={filePreview} alt="Preview" style={{ width: 36, height: 36, borderRadius: 8, objectFit: "cover" }} />
-                                        ) : (
-                                            <div style={{ width: 36, height: 36, borderRadius: 8, background: "rgba(120, 120, 120, 0.1)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                                                <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                                </svg>
-                                            </div>
-                                        )}
-                                        <div style={{ minWidth: 0 }}>
-                                            <div style={{ fontSize: 12, fontWeight: "700", textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap", maxWidth: "200px", color: t.text }}>{selectedFile.name}</div>
-                                            <div style={{ fontSize: 10, color: t.textMuted }}>{(selectedFile.size / 1024).toFixed(1)} KB</div>
-                                        </div>
-                                    </div>
-                                    <button
-                                        type="button"
-                                        onClick={cancelAttachment}
-                                        style={{
-                                            background: "rgba(120, 120, 120, 0.1)",
-                                            border: "none",
-                                            borderRadius: "50%",
-                                            width: 24,
-                                            height: 24,
-                                            display: "flex",
-                                            alignItems: "center",
-                                            justifyContent: "center",
-                                            cursor: "pointer",
-                                            color: t.text
-                                        }}
-                                    >
-                                        <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                                        </svg>
-                                    </button>
-                                </div>
-                            )}
-
-                            {isUploading && (
-                                <div style={{ padding: "6px 12px 10px", width: "100%", boxSizing: "border-box" }}>
-                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, fontWeight: 600, color: t.textMuted, marginBottom: 4 }}>
-                                        <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                            <span className="flowchat-beacon-dot" style={{ width: 6, height: 6, margin: 0 }}></span>
-                                            Uploading attachment...
-                                        </span>
-                                        <span style={{ fontSize: 11, fontWeight: 700, color: "#38bdf8" }}>
-                                            {uploadProgress.loadedFormatted} / {uploadProgress.totalFormatted} • {uploadProgress.percentage}%
-                                        </span>
-                                    </div>
-                                    <div className="ht-upload-progress-container">
-                                        <div className="ht-upload-progress-bar-real" style={{ width: `${uploadProgress.percentage}%` }}></div>
-                                    </div>
-                                </div>
-                            )}
-
-                            <div className="ht-chat-input-card" style={{ background: t.cardBg, border: t.border }}>
-                                <svg
-                                    width="18"
-                                    height="18"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    strokeWidth="2.5"
-                                    viewBox="0 0 24 24"
-                                    style={{ cursor: "pointer", opacity: 0.65, marginBottom: "8px" }}
-                                    title="Attach File"
-                                    onClick={() => fileInputRef.current?.click()}
-                                >
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 11-2.828-2.828l6.414-6.414a4 4 0 015.656 5.656l-6.415 6.415a6 6 0 11-8.486-8.486L10.5 5" />
-                                </svg>
-
-                                <textarea
-                                    ref={inputTextareaRef}
-                                    rows={1}
-                                    placeholder={selectedFile ? "Add a caption..." : "Type a message..."}
-                                    value={messageText}
-                                    onChange={(e) => {
-                                        setMessageText(e.target.value);
-                                        handleKeyPress();
-                                    }}
-                                    onKeyDown={(e) => {
-                                        if (e.key === "Enter") {
-                                            if (e.shiftKey) {
-                                                return; // Allow Shift + Enter to insert a new line naturally
-                                            }
-                                            e.preventDefault();
-                                            handleSendMessage(e);
-                                        }
-                                    }}
-                                    onPaste={handlePaste}
-                                    className="ht-chat-input-field"
-                                    style={{
-                                        color: t.text,
-                                        resize: "none",
-                                        border: "none",
-                                        outline: "none",
-                                        background: "transparent",
-                                        fontFamily: "inherit",
-                                        fontSize: "14px",
-                                        maxHeight: "100px",
-                                        overflowY: "auto",
-                                        paddingTop: "6px",
-                                        paddingBottom: "6px"
-                                    }}
-                                />
-
-                                <div className="ht-input-actions">
-                                    <div style={{ position: "relative" }} ref={emojiPickerRef}>
-                                        <svg
-                                            width="18"
-                                            height="18"
-                                            fill="none"
-                                            stroke="currentColor"
-                                            strokeWidth="2"
-                                            viewBox="0 0 24 24"
-                                            style={{ cursor: "pointer", opacity: showEmojiPicker ? 1 : 0.6, marginRight: 8, color: showEmojiPicker ? t.accent : "currentColor" }}
-                                            title="Insert Emoji"
-                                            onClick={() => setShowEmojiPicker(prev => !prev)}
-                                        >
-                                            <path strokeLinecap="round" strokeLinejoin="round" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                        </svg>
-                                        {showEmojiPicker && (
-                                            <div style={{
-                                                position: "absolute",
-                                                bottom: "calc(100% + 22px)",
-                                                right: 0,
-                                                zIndex: 100,
-                                                // Override emoji picker CSS vars to exactly match our theme colors
-                                                "--epr-bg-color": t.cardBg,
-                                                "--epr-category-label-bg-color": t.cardBg,
-                                                "--epr-header-padding": "12px",
-                                                "--epr-search-input-bg-color": theme === "dark" ? "#121316" : "#f0f1f3",
-                                                "--epr-search-input-bg-color-active": theme === "dark" ? "#121316" : "#f0f1f3",
-                                                "--epr-search-border-color": theme === "dark" ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)",
-                                                "--epr-search-input-text-color": t.text,
-                                                "--epr-text-color": t.text,
-                                                "--epr-category-label-text-color": t.textMuted,
-                                                "--epr-hover-bg-color": theme === "dark" ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.05)",
-                                                "--epr-focus-bg-color": theme === "dark" ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.05)",
-                                                "--epr-picker-border-color": theme === "dark" ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)",
-                                                "--epr-active-skin-tone-indicator-border-color": t.accent,
-                                                "--epr-skin-tone-picker-menu-overlay-bg-color": t.cardBg,
-                                                borderRadius: 16,
-                                                overflow: "hidden",
-                                                boxShadow: theme === "dark" ? "0 8px 40px rgba(0,0,0,0.5)" : "0 8px 32px rgba(0,0,0,0.16)",
-                                                border: t.border,
-                                            }}>
-                                                <EmojiPicker
-                                                    theme={theme === "dark" ? "dark" : "light"}
-                                                    emojiStyle="native"
-                                                    onEmojiClick={(emojiData) => {
-                                                        setMessageText(prev => prev + emojiData.emoji);
-                                                        setShowEmojiPicker(false);
-                                                    }}
-                                                    searchPlaceHolder="Search emoji..."
-                                                    lazyLoadEmojis
-                                                    height={340}
-                                                    width={380}
-                                                    previewConfig={{ showPreview: false }}
-                                                />
-                                            </div>
-                                        )}
-                                    </div>
-
-                                    {/* Voice message mic button — click to start / click to send */}
-                                    {!messageText.trim() && !selectedFile && (
-                                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                            {isRecording && (
-                                                <button
-                                                    type="button"
-                                                    title="Cancel recording"
-                                                    onClick={() => {
-                                                        if (mediaRecorderRef.current?.state === "recording") {
-                                                            mediaRecorderRef.current.onstop = null; // don't send on cancel
-                                                            mediaRecorderRef.current.stop();
-                                                        }
-                                                        if (audioStreamRef.current) {
-                                                            audioStreamRef.current.getTracks().forEach(t => t.stop());
-                                                        }
-                                                        clearInterval(recordingTimerRef.current);
-                                                        setIsRecording(false);
-                                                        setRecordingSeconds(0);
-                                                    }}
-                                                    style={{
-                                                        border: "none",
-                                                        background: "rgba(229, 62, 62, 0.15)",
-                                                        color: "#e53e3e",
-                                                        borderRadius: "50%",
-                                                        width: 32,
-                                                        height: 32,
-                                                        cursor: "pointer",
-                                                        display: "flex",
-                                                        alignItems: "center",
-                                                        justifyContent: "center"
-                                                    }}
-                                                >
-                                                    <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                                                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                                                    </svg>
-                                                </button>
-                                            )}
-                                            <button
-                                                type="button"
-                                                title={isRecording ? "Click to stop & send voice message" : "Click to record voice message"}
-                                                onClick={async () => {
-                                                    if (isRecording) {
-                                                        // Stop and send
-                                                        if (mediaRecorderRef.current?.state === "recording") {
-                                                            mediaRecorderRef.current.stop();
-                                                        }
-                                                        clearInterval(recordingTimerRef.current);
-                                                        setIsRecording(false);
-                                                        setRecordingSeconds(0);
-                                                        return;
-                                                    }
-
-                                                    if (!activeConv) return;
-                                                    try {
-                                                        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                                                        audioStreamRef.current = stream;
-                                                        audioChunksRef.current = [];
-                                                        const mr = new MediaRecorder(stream);
-                                                        mediaRecorderRef.current = mr;
-
-                                                        mr.ondataavailable = (e) => {
-                                                            if (e.data.size > 0) audioChunksRef.current.push(e.data);
-                                                        };
-
-                                                        mr.onstop = async () => {
-                                                            stream.getTracks().forEach(t => t.stop());
-                                                            const blob = new Blob(audioChunksRef.current, { type: "audio/webm" });
-                                                            if (blob.size < 1000) return; // ignore super short clicks
-
-                                                            setIsUploading(true);
-                                                            try {
-                                                                const fd = new FormData();
-                                                                fd.append("file", blob, `voice_${Date.now()}.webm`);
-                                                                const token = localStorage.getItem("chat_token");
-                                                                const res = await fetch(`${API_BASE}/upload`, {
-                                                                    method: "POST",
-                                                                    headers: { Authorization: `Bearer ${token}` },
-                                                                    body: fd
-                                                                });
-                                                                const data = await res.json();
-                                                                if (data.url && socketRef.current) {
-                                                                    const tempId = `temp_${Date.now()}`;
-                                                                    setMessages(prev => [
-                                                                        ...prev,
-                                                                        {
-                                                                            id: tempId,
-                                                                            sender_id: user.userId,
-                                                                            content: "Voice message",
-                                                                            message_type: "audio",
-                                                                            media_url: data.url,
-                                                                            created_at: new Date().toISOString(),
-                                                                            status: "pending"
-                                                                        }
-                                                                    ]);
-                                                                    socketRef.current.send(JSON.stringify({
-                                                                        action: "send_message",
-                                                                        conversation_id: activeConv.id,
-                                                                        content: "Voice message",
-                                                                        message_type: "audio",
-                                                                        media_url: data.url
-                                                                    }));
-                                                                }
-                                                            } catch (err) {
-                                                                console.error("Voice upload failed:", err);
-                                                            } finally {
-                                                                setIsUploading(false);
-                                                            }
-                                                        };
-
-                                                        mr.start();
-                                                        setIsRecording(true);
-                                                        setRecordingSeconds(0);
-                                                        recordingTimerRef.current = setInterval(() => setRecordingSeconds(s => s + 1), 1000);
-                                                    } catch (err) {
-                                                        console.error("Mic error:", err);
-                                                        if (err.name === "NotFoundError" || err.message?.includes("not be found")) {
-                                                            alert("No microphone device found on your computer. Please connect a microphone to record voice messages.");
-                                                        } else {
-                                                            alert("Could not access microphone. Please check your browser and system microphone permissions.");
-                                                        }
-                                                    }
-                                                }}
-                                                style={{
-                                                    width: 36,
-                                                    height: 36,
-                                                    borderRadius: "50%",
-                                                    border: "none",
-                                                    background: isRecording ? "#e53e3e" : t.accent,
-                                                    color: "white",
-                                                    display: "flex",
-                                                    alignItems: "center",
-                                                    justifyContent: "center",
-                                                    cursor: "pointer",
-                                                    flexShrink: 0,
-                                                    transition: "all 0.2s ease"
-                                                }}
-                                            >
-                                                {isRecording ? (
-                                                    <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: "-0.5px" }}>
-                                                        {Math.floor(recordingSeconds / 60).toString().padStart(2, "0")}:{(recordingSeconds % 60).toString().padStart(2, "0")}
-                                                    </span>
-                                                ) : (
-                                                    <svg width="14" height="14" fill="currentColor" viewBox="0 0 24 24">
-                                                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-                                                        <path d="M19 10v2a7 7 0 0 1-14 0v-2" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" />
-                                                        <line x1="12" y1="19" x2="12" y2="23" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                                                        <line x1="8" y1="23" x2="16" y2="23" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                                                    </svg>
-                                                )}
-                                            </button>
-                                        </div>
-                                    )}
-
-                                    {/* Send button — shows when there's text or a file attached */}
-                                    {(messageText.trim() || selectedFile) && (
-                                        <button className="ht-send-pill" type="submit" style={{ background: t.accent }} disabled={isUploading}>
-                                            <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                                                <path strokeLinecap="round" strokeLinejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3" />
-                                            </svg>
-                                        </button>
-                                    )}
-                                </div>
-                            </div>
-                        </form>
-                        <input
-                            type="file"
-                            ref={fileInputRef}
-                            onChange={handleFileSelect}
-                            style={{ display: "none" }}
-                        />
-                    </>
-                ) : (
-                    <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: t.textMuted, padding: 40, textAlign: "center" }}>
-                        <svg width="48" height="48" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24" style={{ marginBottom: 16, opacity: 0.5 }}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                        </svg>
-                        <h4 style={{ margin: "0 0 8px", fontSize: 16, color: t.text, fontWeight: 750 }}>No Conversation Selected</h4>
-                        <p style={{ margin: 0, fontSize: 13, maxWidth: 280, lineHeight: 1.45 }}>Choose a message thread from the inbox sidebar, or search profiles in the system directory.</p>
-                    </div>
-                )}
-            </div>
-
-            {/* 4. Far Right Context Inspector */}
-            <div
-                className="ht-inspector"
-                style={{
-                    width: (showInspector && activeConv) ? `${rightSidebarWidth}px` : "0px",
-                    background: t.inspectorBg,
-                    borderLeft: (showInspector && activeConv) ? t.border : "none",
-                    position: "relative",
-                    flexShrink: 0
-                }}
-            >
-                {showInspector && activeConv && (
-                    <div
-                        onMouseDown={(e) => {
-                            e.preventDefault();
-                            setIsResizingRight(true);
-                        }}
-                        style={{
-                            position: "absolute",
-                            top: 0,
-                            left: 0,
-                            width: 6,
-                            height: "100%",
-                            cursor: "col-resize",
-                            zIndex: 100,
-                            background: isResizingRight ? t.accent : "transparent"
-                        }}
-                        className="ht-drag-handle"
-                        title="Drag to resize info sidebar"
-                    />
-                )}
-                {activeConv && (
-                    <div className="ht-inspector-inner">
-                        <div className="ht-inspector-avatar-box">
-                            <button className="ht-inspector-close-btn" onClick={() => setShowInspector(false)} title="Close Inspector">
-                                <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
-                            </button>
-
-                            <div style={{ width: 84, height: 84, borderRadius: "50%", background: "#4f46e5", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontSize: "28px", fontWeight: "800", position: "relative", marginBottom: 12 }}>
-                                {activeConv.avatar_url ? (
-                                    <img src={activeConv.avatar_url} alt="" style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} />
-                                ) : (
-                                    activeConv.display_name?.[0]?.toUpperCase() || "@"
-                                )}
-                            </div>
-
-                            <div style={{ fontSize: 16, fontWeight: "800", color: t.text }}>{activeConv.display_name}</div>
-                            <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>
-                                {activeConv.other_participant ? `@${activeConv.other_participant.username}` : "Personal Cloud"}
-                            </div>
-
-                            {activeConv.other_participant?.bio && (
-                                <div style={{
-                                    fontSize: 12,
-                                    color: t.text,
-                                    opacity: 0.85,
-                                    marginTop: 10,
-                                    padding: "8px 12px",
-                                    background: "rgba(120, 120, 120, 0.08)",
-                                    borderRadius: 10,
-                                    textAlign: "center",
-                                    lineHeight: 1.4,
-                                    wordBreak: "break-word"
-                                }}>
-                                    "{activeConv.other_participant.bio}"
-                                </div>
-                            )}
-                        </div>
-
-                        <div className="ht-inspector-actions" style={{ borderBottom: t.border, paddingBottom: 20 }}>
-                            <button
-                                className="ht-inspector-action-btn"
-                                style={{ color: t.text }}
-                                onClick={() => {
-                                    setViewingParticipantProfile({
-                                        user_id: activeConv.other_participant?.user_id,
-                                        display_name: activeConv.display_name,
-                                        username: activeConv.other_participant?.username || activeConv.display_name,
-                                        bio: activeConv.other_participant?.bio,
-                                        avatar_url: activeConv.avatar_url,
-                                        status: activeConv.other_participant?.status || "online",
-                                        last_seen: activeConv.other_participant?.last_seen
-                                    });
-                                }}
-                                title="View User Profile"
-                            >
-                                <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
-                                <span>Profile</span>
-                            </button>
-                            <button
-                                className="ht-inspector-action-btn"
-                                style={{ color: mutedConvIds[activeConv.id] ? "#ef4444" : t.text }}
-                                onClick={() => toggleMuteConversation(activeConv.id)}
-                                title={mutedConvIds[activeConv.id] ? "Unmute Notifications" : "Mute Notifications"}
-                            >
-                                {mutedConvIds[activeConv.id] ? (
-                                    <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
-                                        <path strokeLinecap="round" strokeLinejoin="round" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
-                                    </svg>
-                                ) : (
-                                    <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
-                                )}
-                                <span>{mutedConvIds[activeConv.id] ? "Muted" : "Mute"}</span>
-                            </button>
-                            <button
-                                className="ht-inspector-action-btn"
-                                style={{ color: isInChatSearchOpen ? t.accent : t.text }}
-                                onClick={() => {
-                                    setIsInChatSearchOpen(true);
-                                    setInChatSearchQuery("");
-                                    setInChatSearchMatchIndex(0);
-                                }}
-                                title="Search Messages in Chat"
-                            >
-                                <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-                                <span>Search</span>
-                            </button>
-                        </div>
-
-                        {/* Group Participants Section */}
-                        {activeConv.type === "group" && (
-                            <div style={{ margin: "16px 0", paddingBottom: 16, borderBottom: t.border }}>
-                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                                    <div style={{ fontSize: 13, fontWeight: "755", color: t.text }}>
-                                        Group Members <span style={{ opacity: 0.6, fontWeight: "500" }}>({activeConv.participants?.length || 0})</span>
-                                    </div>
-                                    {isUserGroupAdmin(activeConv, user.userId) && (
-                                        <button
-                                            type="button"
-                                            onClick={() => setIsAddMemberOpen(true)}
-                                            style={{
-                                                background: theme === "dark" ? "rgba(56, 189, 248, 0.2)" : "rgba(3, 105, 161, 0.12)",
-                                                border: theme === "dark" ? "1px solid rgba(56, 189, 248, 0.5)" : "1px solid rgba(3, 105, 161, 0.3)",
-                                                color: theme === "dark" ? "#38bdf8" : "#0284c7",
-                                                borderRadius: "8px",
-                                                padding: "4px 10px",
-                                                fontSize: "11px",
-                                                fontWeight: "800",
-                                                cursor: "pointer",
-                                                transition: "all 0.2s ease"
-                                            }}
-                                        >
-                                            + Add Member
-                                        </button>
-                                    )}
-                                </div>
-
-                                <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 220, overflowY: "auto" }}>
-                                    {(activeConv.participants || []).map(p => {
-                                        const pId = p.user_id || p.id;
-                                        const isMe = pId === user.userId;
-                                        const isCreator = pId === activeConv.creator_id;
-                                        const isAdmin = isCreator || (groupAdminsMap[activeConv.id] || []).includes(pId);
-                                        const meIsAdmin = isUserGroupAdmin(activeConv, user.userId);
-
-                                        return (
-                                            <div
-                                                key={pId}
-                                                onClick={() => {
-                                                    if (!isMe) {
-                                                        handleStartConversation({
-                                                            user_id: pId,
-                                                            username: p.username,
-                                                            display_name: p.display_name || p.username,
-                                                            avatar_url: p.avatar_url
-                                                        });
-                                                    }
-                                                }}
-                                                onContextMenu={(e) => {
-                                                    e.preventDefault();
-                                                    e.stopPropagation();
-                                                    setParticipantContextMenu({
-                                                        x: e.clientX,
-                                                        y: e.clientY,
-                                                        participant: p
-                                                    });
-                                                }}
-                                                style={{
-                                                    display: "flex",
-                                                    alignItems: "center",
-                                                    justifyContent: "space-between",
-                                                    padding: "6px 8px",
-                                                    borderRadius: 10,
-                                                    background: "rgba(120, 120, 120, 0.05)",
-                                                    cursor: isMe ? "default" : "pointer"
-                                                }}
-                                                title={isMe ? "You" : "Right-click or click for actions"}
-                                            >
-                                                <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-                                                    <div style={{
-                                                        width: 32,
-                                                        height: 32,
-                                                        borderRadius: "50%",
-                                                        background: "#4f46e5",
-                                                        display: "flex",
-                                                        alignItems: "center",
-                                                        justifyContent: "center",
-                                                        color: "white",
-                                                        fontSize: 12,
-                                                        fontWeight: 700,
-                                                        flexShrink: 0
-                                                    }}>
-                                                        {p.avatar_url ? (
-                                                            <img src={p.avatar_url} alt="" style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} />
-                                                        ) : (
-                                                            (p.display_name || p.username || "U")[0].toUpperCase()
-                                                        )}
-                                                    </div>
-                                                    <div style={{ minWidth: 0 }}>
-                                                        <div style={{ fontSize: 12, fontWeight: 700, color: t.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                                                            {p.display_name || p.username} {isMe && "(You)"}
-                                                        </div>
-                                                        <div style={{ fontSize: 10, color: t.textMuted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                                                            @{p.username}
-                                                        </div>
-                                                    </div>
-                                                </div>
-
-                                                <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-                                                    {isCreator ? (
-                                                        <span style={{ fontSize: 9, fontWeight: 800, background: "rgba(168, 85, 247, 0.2)", color: "#c084fc", padding: "2px 6px", borderRadius: 6 }}>CREATOR</span>
-                                                    ) : isAdmin ? (
-                                                        <span style={{ fontSize: 9, fontWeight: 800, background: "rgba(56, 189, 248, 0.2)", color: theme === "dark" ? "#38bdf8" : t.accent, padding: "2px 6px", borderRadius: 6 }}>ADMIN</span>
-                                                    ) : (
-                                                        <span style={{ fontSize: 9, fontWeight: 700, color: t.textMuted }}>MEMBER</span>
-                                                    )}
-                                                    <button
-                                                        type="button"
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            e.preventDefault();
-                                                            const rect = e.currentTarget.getBoundingClientRect();
-                                                            setParticipantContextMenu({
-                                                                x: rect.left - 120,
-                                                                y: rect.bottom + 4,
-                                                                participant: p
-                                                            });
-                                                        }}
-                                                        style={{
-                                                            background: "none",
-                                                            border: "none",
-                                                            color: t.textMuted,
-                                                            fontSize: 12,
-                                                            cursor: "pointer",
-                                                            padding: "2px 4px"
-                                                        }}
-                                                        title="Member options"
-                                                    >
-                                                        •••
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            </div>
-                        )}
-
-                        {/* Expandable Image Gallery segment */}
-                        <div>
-                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, fontWeight: "755", marginBottom: 8 }}>
-                                <span>Images <span style={{ opacity: 0.5, fontWeight: "500" }}>({sharedImages.length} files)</span></span>
-                                <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24" style={{ cursor: "pointer", opacity: 0.6 }}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
-                            </div>
-                            {sharedImages.length > 0 ? (
-                                <div className="ht-media-grid">
-                                    {sharedImages.map(imgMsg => (
-                                        <div className="ht-media-tile" key={imgMsg.message_id || imgMsg.id}>
-                                            <img
-                                                src={getAssetUrl(imgMsg.media_url)}
-                                                alt=""
-                                                style={{ cursor: "pointer" }}
-                                                onClick={() => window.open(getAssetUrl(imgMsg.media_url), "_blank")}
-                                            />
-                                        </div>
-                                    ))}
-                                </div>
-                            ) : (
-                                <div style={{ padding: "16px 12px", borderRadius: 10, background: "rgba(120, 120, 120, 0.04)", border: t.border, fontSize: 11, color: t.textMuted, textAlign: "center" }}>
-                                    No shared images.
-                                </div>
-                            )}
-                        </div>
-
-                        {/* Shared File list segment */}
-                        <div style={{ marginTop: 20 }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, fontWeight: "755", marginBottom: 8 }}>
-                                <span>Recent Files <span style={{ opacity: 0.5, fontWeight: "500" }}>({sharedFiles.length} files)</span></span>
-                                <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24" style={{ cursor: "pointer", opacity: 0.6 }}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
-                            </div>
-                            {sharedFiles.length > 0 ? (
-                                <div className="ht-file-list">
-                                    {sharedFiles.map(fileMsg => {
-                                        const filename = fileMsg.content || fileMsg.media_url?.split("/").pop() || "Attachment";
-                                        return (
-                                            <div
-                                                className="ht-file-item"
-                                                key={fileMsg.message_id || fileMsg.id}
-                                                style={{ cursor: "pointer" }}
-                                                onClick={() => window.open(getAssetUrl(fileMsg.media_url), "_blank")}
-                                            >
-                                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#EA4335" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /></svg>
-                                                <div style={{ flex: 1, minWidth: 0 }}>
-                                                    <div style={{ fontSize: 12, fontWeight: "700", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: t.text }}>{filename}</div>
-                                                    <div style={{ fontSize: 9.5, color: t.textMuted }}>Shared File</div>
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            ) : (
-                                <div style={{ padding: "16px 12px", borderRadius: 10, background: "rgba(120, 120, 120, 0.04)", border: t.border, fontSize: 11, color: t.textMuted, textAlign: "center" }}>
-                                    No shared documents.
-                                </div>
-                            )}
-                        </div>
-
-                    </div>
-                )}
-            </div>
+            {/* 4. Far Right Conversation Details Inspector Panel */}
+            <ConversationInspector
+                showInspector={showInspector}
+                activeConv={activeConv}
+                rightSidebarWidth={rightSidebarWidth}
+                themeTokens={t}
+                theme={theme}
+                setIsResizingRight={setIsResizingRight}
+                isResizingRight={isResizingRight}
+                setShowInspector={setShowInspector}
+                setViewingParticipantProfile={setViewingParticipantProfile}
+                mutedConvIds={mutedConvIds}
+                toggleMuteConversation={toggleMuteConversation}
+                setIsInChatSearchOpen={setIsInChatSearchOpen}
+                setInChatSearchQuery={setInChatSearchQuery}
+                setInChatSearchMatchIndex={setInChatSearchMatchIndex}
+                isUserGroupAdmin={isUserGroupAdmin}
+                user={user}
+                setIsAddMemberOpen={setIsAddMemberOpen}
+                groupAdminsMap={groupAdminsMap}
+                handleStartConversation={handleStartConversation}
+                setParticipantContextMenu={setParticipantContextMenu}
+                sharedImages={sharedImages}
+                sharedFiles={sharedFiles}
+            />
 
             {/* Participant Profile Modal */}
             {viewingParticipantProfile && (
@@ -4496,800 +2256,250 @@ export default function ChatDashboard({ user, onLogout }) {
                 </div>
             )}
 
-            {/* Group Info & Admin Settings Modal */}
-            {isGroupInfoOpen && activeConv && activeConv.type === "group" && (
-                <div
-                    style={{
-                        position: "fixed",
-                        inset: 0,
-                        zIndex: 9999,
-                        background: "rgba(0, 0, 0, 0.65)",
-                        backdropFilter: "blur(10px)",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        padding: 20
-                    }}
-                    onClick={() => setIsGroupInfoOpen(false)}
-                >
-                    <div
-                        style={{
-                            background: t.cardBg,
-                            border: t.border,
-                            borderRadius: 24,
-                            width: "100%",
-                            maxWidth: 460,
-                            padding: 24,
-                            boxShadow: "0 20px 50px rgba(0,0,0,0.4)",
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: 20,
-                            maxHeight: "90vh",
-                            overflowY: "auto"
-                        }}
-                        onClick={(e) => e.stopPropagation()}
-                    >
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                            <h3 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: t.text }}>Group Info & Admin Settings</h3>
-                            <button
-                                onClick={() => setIsGroupInfoOpen(false)}
-                                style={{ background: "none", border: "none", color: t.textMuted, cursor: "pointer", fontSize: 18, fontWeight: 700 }}
-                            >
-                                ✕
-                            </button>
-                        </div>
+            {/* Modals */}
+            <GroupInfoModal
+                isGroupInfoOpen={isGroupInfoOpen}
+                setIsGroupInfoOpen={setIsGroupInfoOpen}
+                activeConv={activeConv}
+                user={user}
+                theme={theme}
+                themeTokens={t}
+                editGroupAvatarUrl={editGroupAvatarUrl}
+                isUserGroupAdmin={isUserGroupAdmin}
+                groupAvatarInputRef={groupAvatarInputRef}
+                handleGroupAvatarFileChange={handleGroupAvatarFileChange}
+                editGroupTitle={editGroupTitle}
+                setEditGroupTitle={setEditGroupTitle}
+                handleSaveGroupInfo={handleSaveGroupInfo}
+                isSavingGroupInfo={isSavingGroupInfo}
+                setIsAddMemberOpen={setIsAddMemberOpen}
+            />
 
-                        {/* Avatar & Info */}
-                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
-                            <div style={{ position: "relative", width: 84, height: 84 }}>
-                                <div style={{
-                                    width: 84,
-                                    height: 84,
-                                    borderRadius: "50%",
-                                    background: t.accent,
-                                    display: "flex",
-                                    alignItems: "center",
-                                    justifyContent: "center",
-                                    color: "#fff",
-                                    fontSize: 32,
-                                    fontWeight: 800,
-                                    overflow: "hidden",
-                                    border: `3px solid ${t.accent}`
-                                }}>
-                                    {editGroupAvatarUrl ? (
-                                        <img src={getAssetUrl(editGroupAvatarUrl)} alt="Group Avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                                    ) : (
-                                        (activeConv.title || activeConv.display_name)?.[0]?.toUpperCase() || "G"
-                                    )}
-                                </div>
+            <CreateGroupModal
+                isCreateGroupOpen={isCreateGroupOpen}
+                setIsCreateGroupOpen={setIsCreateGroupOpen}
+                groupTitle={groupTitle}
+                setGroupTitle={setGroupTitle}
+                selectedGroupMembers={selectedGroupMembers}
+                setSelectedGroupMembers={setSelectedGroupMembers}
+                handleRemoveGroupMember={handleRemoveGroupMember}
+                groupSearchQuery={groupSearchQuery}
+                setGroupSearchQuery={setGroupSearchQuery}
+                groupSearchResults={groupSearchResults}
+                handleSelectGroupMember={handleSelectGroupMember}
+                handleCreateGroupSubmit={handleCreateGroupSubmit}
+                isCreatingGroup={isCreatingGroup}
+                themeTokens={t}
+            />
 
-                                {isUserGroupAdmin(activeConv, user.userId) && (
-                                    <>
-                                        <button
-                                            type="button"
-                                            onClick={() => groupAvatarInputRef.current?.click()}
-                                            style={{
-                                                position: "absolute",
-                                                bottom: 0,
-                                                right: 0,
-                                                width: 28,
-                                                height: 28,
-                                                borderRadius: "50%",
-                                                background: t.accent,
-                                                border: "2px solid " + t.cardBg,
-                                                color: "#fff",
-                                                display: "flex",
-                                                alignItems: "center",
-                                                justifyContent: "center",
-                                                cursor: "pointer",
-                                                fontSize: 12,
-                                                boxShadow: "0 2px 8px rgba(0,0,0,0.3)"
-                                            }}
-                                            title="Change Group Photo"
-                                        >
-                                            📷
-                                        </button>
-                                        <input
-                                            ref={groupAvatarInputRef}
-                                            type="file"
-                                            accept="image/*"
-                                            style={{ display: "none" }}
-                                            onChange={handleGroupAvatarFileChange}
-                                        />
-                                    </>
-                                )}
-                            </div>
+            <AddMemberModal
+                isAddMemberOpen={isAddMemberOpen}
+                setIsAddMemberOpen={setIsAddMemberOpen}
+                addMemberQuery={addMemberQuery}
+                setAddMemberQuery={setAddMemberQuery}
+                addMemberResults={addMemberResults}
+                handleAddMemberToGroup={handleAddMemberToGroup}
+                themeTokens={t}
+            />
 
-                            <div style={{ textAlign: "center" }}>
-                                <h4 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: t.text }}>
-                                    {activeConv.title || activeConv.display_name}
-                                </h4>
-                                <span style={{ fontSize: 12, color: t.textMuted }}>
-                                    {activeConv.participants?.length || 0} Participants
-                                </span>
-                            </div>
-                        </div>
+            <UserProfileModal
+                viewingParticipantProfile={viewingParticipantProfile}
+                setViewingParticipantProfile={setViewingParticipantProfile}
+                user={user}
+                handleStartConversation={handleStartConversation}
+                themeTokens={t}
+            />
 
-                        {/* Admin Settings Form */}
-                        {isUserGroupAdmin(activeConv, user.userId) ? (
-                            <form onSubmit={handleSaveGroupInfo} style={{ display: "flex", flexDirection: "column", gap: 14, background: "rgba(120,120,120,0.04)", padding: 16, borderRadius: 16, border: t.border }}>
-                                <div style={{ fontSize: 11, fontWeight: 800, color: t.accent, textTransform: "uppercase", letterSpacing: "0.5px" }}>
-                                    Group Admin Controls
-                                </div>
+            {/* Participant Right-Click Context Menu */}
+            <ParticipantContextMenu
+                participantContextMenu={participantContextMenu}
+                setParticipantContextMenu={setParticipantContextMenu}
+                user={user}
+                activeConv={activeConv}
+                handleStartConversation={handleStartConversation}
+                isUserGroupAdmin={isUserGroupAdmin}
+                groupAdminsMap={groupAdminsMap}
+                handleMakeAdmin={handleMakeAdmin}
+                setViewingParticipantProfile={setViewingParticipantProfile}
+                theme={theme}
+                themeTokens={t}
+            />
 
-                                <div>
-                                    <label style={{ fontSize: 11, fontWeight: 700, color: t.textMuted, display: "block", marginBottom: 6 }}>
-                                        Group Name / Title
-                                    </label>
-                                    <input
-                                        type="text"
-                                        value={editGroupTitle}
-                                        onChange={(e) => setEditGroupTitle(e.target.value)}
-                                        placeholder="Enter group title..."
-                                        style={{
-                                            width: "100%",
-                                            padding: "10px 12px",
-                                            borderRadius: 12,
-                                            background: t.inputBg,
-                                            border: t.inputBorder,
-                                            color: t.text,
-                                            outline: "none",
-                                            fontSize: 13,
-                                            fontWeight: 600
-                                        }}
-                                    />
-                                </div>
-
-                                <button
-                                    type="submit"
-                                    disabled={isSavingGroupInfo}
-                                    style={{
-                                        width: "100%",
-                                        padding: "10px",
-                                        borderRadius: 12,
-                                        border: "none",
-                                        background: t.accent,
-                                        color: "white",
-                                        fontWeight: 800,
-                                        fontSize: 13,
-                                        cursor: "pointer",
-                                        opacity: isSavingGroupInfo ? 0.7 : 1
-                                    }}
-                                >
-                                    {isSavingGroupInfo ? "Saving..." : "Save Group Settings"}
-                                </button>
-                            </form>
-                        ) : (
-                            <div style={{ padding: 12, borderRadius: 12, background: "rgba(120,120,120,0.05)", fontSize: 12, color: t.textMuted, textAlign: "center" }}>
-                                Only Group Admins can edit group title and photo.
-                            </div>
-                        )}
-
-                        {/* Members Section */}
-                        <div>
-                            <div style={{ fontSize: 13, fontWeight: 800, color: t.text, marginBottom: 12, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                                <span>Group Members</span>
-                                {isUserGroupAdmin(activeConv, user.userId) && (
-                                    <button
-                                        type="button"
-                                        onClick={() => {
-                                            setIsGroupInfoOpen(false);
-                                            setIsAddMemberOpen(true);
-                                        }}
-                                        style={{
-                                            background: theme === "dark" ? "rgba(56, 189, 248, 0.2)" : "rgba(3, 105, 161, 0.12)",
-                                            border: theme === "dark" ? "1px solid rgba(56, 189, 248, 0.5)" : "1px solid rgba(3, 105, 161, 0.3)",
-                                            color: theme === "dark" ? "#38bdf8" : "#0284c7",
-                                            borderRadius: "8px",
-                                            padding: "4px 10px",
-                                            fontSize: "11px",
-                                            fontWeight: "800",
-                                            cursor: "pointer",
-                                            transition: "all 0.2s ease"
-                                        }}
-                                    >
-                                        + Add Member
-                                    </button>
-                                )}
-                            </div>
-
-                            <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 220, overflowY: "auto" }}>
-                                {activeConv.participants?.map(p => {
-                                    const pId = p.user_id || p.id;
-                                    const isAdmin = isUserGroupAdmin(activeConv, pId);
-                                    const isCreator = activeConv.creator_id === pId;
-
-                                    return (
-                                        <div key={pId} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 10px", borderRadius: 12, background: "rgba(120,120,120,0.05)" }}>
-                                            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                                                <div style={{ width: 36, height: 36, borderRadius: "50%", background: "#6366f1", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 13 }}>
-                                                    {p.avatar_url ? <img src={p.avatar_url} alt="" style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} /> : ((p.display_name || p.username)?.[0]?.toUpperCase() || "@")}
-                                                </div>
-                                                <div>
-                                                    <div style={{ fontSize: 13, fontWeight: 700, color: t.text, display: "flex", alignItems: "center", gap: 6 }}>
-                                                        {p.display_name || p.username}
-                                                        {pId === user.userId && <span style={{ fontSize: 10, opacity: 0.6 }}>(You)</span>}
-                                                    </div>
-                                                    <div style={{ fontSize: 11, color: t.textMuted }}>@{p.username}</div>
-                                                </div>
-                                            </div>
-
-                                            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                                {isCreator ? (
-                                                    <span style={{ fontSize: 10, fontWeight: 800, color: "#eab308", background: "rgba(234, 179, 8, 0.15)", padding: "2px 8px", borderRadius: 8 }}>Creator</span>
-                                                ) : isAdmin ? (
-                                                    <span style={{ fontSize: 10, fontWeight: 800, color: "#38bdf8", background: "rgba(56, 189, 248, 0.15)", padding: "2px 8px", borderRadius: 8 }}>Admin</span>
-                                                ) : (
-                                                    <span style={{ fontSize: 10, fontWeight: 700, color: t.textMuted, background: "rgba(120, 120, 120, 0.1)", padding: "2px 8px", borderRadius: 8 }}>Member</span>
-                                                )}
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* Create Group Modal */}
-            {isCreateGroupOpen && (
+            {/* Pin Scope Choice Modal */}
+            {pinScopePromptMsg && (
                 <div style={{
                     position: "fixed",
-                    inset: 0,
-                    zIndex: 9999,
-                    background: "rgba(0, 0, 0, 0.65)",
-                    backdropFilter: "blur(10px)",
+                    top: 0, left: 0, right: 0, bottom: 0,
+                    backgroundColor: "rgba(0, 0, 0, 0.6)",
+                    backdropFilter: "blur(4px)",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    padding: 20
-                }}>
+                    zIndex: 9999
+                }} onClick={() => { setPinScopePromptMsg(null); setPinNotifyStep(false); }}>
                     <div style={{
                         background: t.cardBg,
                         border: t.border,
-                        borderRadius: 24,
-                        width: "100%",
-                        maxWidth: 440,
+                        borderRadius: 16,
                         padding: 24,
-                        boxShadow: "0 20px 50px rgba(0,0,0,0.4)",
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 20
-                    }}>
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                            <h3 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: t.text }}>Create Group Chat</h3>
-                            <button
-                                onClick={() => {
-                                    setIsCreateGroupOpen(false);
-                                    setGroupTitle("");
-                                    setSelectedGroupMembers([]);
-                                }}
-                                style={{ background: "none", border: "none", color: t.textMuted, cursor: "pointer", fontSize: 18, fontWeight: 700 }}
-                            >
-                                ✕
-                            </button>
-                        </div>
+                        maxWidth: 360,
+                        width: "90%",
+                        boxShadow: "0 20px 40px rgba(0,0,0,0.4)"
+                    }} onClick={(e) => e.stopPropagation()}>
+                        {!pinNotifyStep ? (
+                            <>
+                                <h3 style={{ margin: "0 0 8px", fontSize: 18, color: t.text, fontWeight: 700 }}>Pin Message</h3>
+                                <p style={{ margin: "0 0 20px", fontSize: 13, color: t.textMuted, lineHeight: 1.4 }}>
+                                    Choose how you want to pin this message in this chat:
+                                </p>
 
-                        <form onSubmit={handleCreateGroupSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                            <div>
-                                <label style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.6px", color: t.textMuted, display: "block", marginBottom: 6 }}>
-                                    Group Title
-                                </label>
-                                <input
-                                    type="text"
-                                    // placeholder="e.g. Design System Team"
-                                    value={groupTitle}
-                                    onChange={(e) => setGroupTitle(e.target.value)}
+                                <button
                                     style={{
                                         width: "100%",
-                                        padding: "12px 14px",
-                                        borderRadius: 14,
-                                        background: t.inputBg,
-                                        border: t.inputBorder,
-                                        color: t.text,
-                                        outline: "none",
-                                        fontSize: 14,
-                                        fontWeight: 600
-                                    }}
-                                    autoFocus
-                                />
-                            </div>
-
-                            <div>
-                                <label style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.6px", color: t.textMuted, display: "block", marginBottom: 6 }}>
-                                    Add Members
-                                </label>
-                                {selectedGroupMembers.length > 0 && (
-                                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
-                                        {selectedGroupMembers.map(m => (
-                                            <span key={m.id || m.user_id} style={{
-                                                background: "rgba(56, 189, 248, 0.15)",
-                                                color: "#38bdf8",
-                                                border: "1px solid rgba(56, 189, 248, 0.3)",
-                                                borderRadius: 20,
-                                                padding: "4px 10px",
-                                                fontSize: 12,
-                                                fontWeight: 700,
-                                                display: "inline-flex",
-                                                alignItems: "center",
-                                                gap: 6
-                                            }}>
-                                                {m.display_name || m.username}
-                                                <button
-                                                    type="button"
-                                                    onClick={() => handleRemoveGroupMember(m.id || m.user_id)}
-                                                    style={{ background: "none", border: "none", color: "#38bdf8", cursor: "pointer", padding: 0, fontSize: 12, fontWeight: 800 }}
-                                                >
-                                                    ✕
-                                                </button>
-                                            </span>
-                                        ))}
-                                    </div>
-                                )}
-
-                                <input
-                                    type="text"
-                                    placeholder="Search user to add..."
-                                    value={groupSearchQuery}
-                                    onChange={(e) => setGroupSearchQuery(e.target.value)}
-                                    style={{
-                                        width: "100%",
-                                        padding: "10px 14px",
-                                        borderRadius: 14,
-                                        background: t.inputBg,
-                                        border: t.inputBorder,
-                                        color: t.text,
-                                        outline: "none",
-                                        fontSize: 13
-                                    }}
-                                />
-
-                                {groupSearchResults.length > 0 && (
-                                    <div style={{
-                                        marginTop: 6,
-                                        maxHeight: 160,
-                                        overflowY: "auto",
-                                        borderRadius: 12,
-                                        background: t.cardBg,
+                                        padding: "14px 16px",
+                                        background: t.inputBg || t.bg,
                                         border: t.border,
-                                        boxShadow: "0 10px 25px rgba(0,0,0,0.2)"
-                                    }}>
-                                        {groupSearchResults.map(u => (
-                                            <div
-                                                key={u.id || u.user_id}
-                                                onClick={() => handleSelectGroupMember(u)}
-                                                style={{
-                                                    padding: "10px 14px",
-                                                    display: "flex",
-                                                    alignItems: "center",
-                                                    gap: 10,
-                                                    cursor: "pointer",
-                                                    borderBottom: t.border,
-                                                    transition: "background 0.2s ease"
-                                                }}
-                                                onMouseEnter={(e) => e.currentTarget.style.background = "rgba(120, 120, 120, 0.08)"}
-                                                onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                                            >
-                                                <div style={{ width: 28, height: 28, borderRadius: "50%", background: "#6366f1", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 11 }}>
-                                                    {u.avatar_url ? <img src={u.avatar_url} alt="" style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} /> : (u.username?.[0]?.toUpperCase() || "U")}
-                                                </div>
-                                                <div>
-                                                    <div style={{ fontSize: 13, fontWeight: 700, color: t.text }}>{u.display_name || u.username}</div>
-                                                    <div style={{ fontSize: 11, color: t.textMuted }}>@{u.username}</div>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-
-                            <button
-                                type="submit"
-                                disabled={isCreatingGroup || !groupTitle.trim() || selectedGroupMembers.length === 0}
-                                style={{
-                                    marginTop: 10,
-                                    width: "100%",
-                                    padding: "12px",
-                                    borderRadius: 14,
-                                    background: "linear-gradient(135deg, #03346E, #0284c7)",
-                                    color: "#ffffff",
-                                    border: "none",
-                                    fontWeight: 800,
-                                    fontSize: 14,
-                                    cursor: "pointer",
-                                    opacity: (isCreatingGroup || !groupTitle.trim() || selectedGroupMembers.length === 0) ? 0.5 : 1,
-                                    boxShadow: "0 4px 14px rgba(2, 132, 199, 0.35)",
-                                    transition: "all 0.2s ease"
-                                }}
-                            >
-                                {isCreatingGroup ? "Creating Group..." : "Create Group Chat"}
-                            </button>
-                        </form>
-                    </div>
-                </div>
-            )}
-
-            {/* Add Member Modal */}
-            {isAddMemberOpen && (
-                <div
-                    style={{
-                        position: "fixed",
-                        top: 0,
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        background: "rgba(0, 0, 0, 0.65)",
-                        backdropFilter: "blur(8px)",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        zIndex: 9999,
-                        padding: 20
-                    }}
-                >
-                    <div style={{
-                        background: t.cardBg,
-                        border: t.border,
-                        borderRadius: 20,
-                        width: "100%",
-                        maxWidth: 440,
-                        padding: 24,
-                        boxShadow: "0 20px 50px rgba(0,0,0,0.5)",
-                        position: "relative"
-                    }}>
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setIsAddMemberOpen(false);
-                                setAddMemberQuery("");
-                            }}
-                            style={{
-                                position: "absolute",
-                                top: 16,
-                                right: 16,
-                                background: "none",
-                                border: "none",
-                                color: t.textMuted,
-                                fontSize: 18,
-                                cursor: "pointer"
-                            }}
-                        >
-                            ✕
-                        </button>
-
-                        <h3 style={{ margin: "0 0 16px", fontSize: 18, fontWeight: 800, color: t.text }}>
-                            Add Member to Group
-                        </h3>
-
-                        <input
-                            type="text"
-                            placeholder="Search public accounts..."
-                            value={addMemberQuery}
-                            onChange={(e) => setAddMemberQuery(e.target.value)}
-                            style={{
-                                width: "100%",
-                                padding: "10px 14px",
-                                borderRadius: 12,
-                                background: t.inputBg,
-                                border: t.inputBorder,
-                                color: t.text,
-                                fontSize: 13,
-                                outline: "none",
-                                marginBottom: 14
-                            }}
-                            autoFocus
-                        />
-
-                        <div style={{ maxHeight: 240, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8 }}>
-                            {addMemberResults.map(u => (
-                                <div
-                                    key={u.id}
-                                    style={{
+                                        borderRadius: 12,
+                                        color: t.text,
+                                        cursor: "pointer",
+                                        textAlign: "left",
                                         display: "flex",
                                         alignItems: "center",
-                                        justifyContent: "space-between",
-                                        padding: "8px 12px",
-                                        borderRadius: 12,
-                                        background: "rgba(120, 120, 120, 0.06)"
+                                        gap: 12,
+                                        marginBottom: 10
                                     }}
+                                    onClick={() => executePin(pinScopePromptMsg, "personal", false)}
                                 >
-                                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                                        <div style={{ width: 34, height: 34, borderRadius: "50%", background: t.accent, display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontWeight: 700, fontSize: 13 }}>
-                                            {(u.display_name || u.username)[0].toUpperCase()}
-                                        </div>
-                                        <div>
-                                            <div style={{ fontSize: 13, fontWeight: 700, color: t.text }}>{u.display_name || u.username}</div>
-                                            <div style={{ fontSize: 11, color: t.textMuted }}>@{u.username}</div>
-                                        </div>
+                                    <span style={{ fontSize: 20 }}>👤</span>
+                                    <div>
+                                        <div style={{ fontSize: 14, fontWeight: 600 }}>Pin for me</div>
+                                        <div style={{ fontSize: 12, color: t.textMuted }}>Only visible to you</div>
                                     </div>
+                                </button>
+
+                                {isAdmin && (
                                     <button
-                                        type="button"
-                                        onClick={() => handleAddMemberToGroup(u)}
                                         style={{
-                                            background: t.accent,
-                                            border: "none",
-                                            color: "white",
-                                            fontWeight: 800,
-                                            fontSize: 11,
-                                            padding: "6px 12px",
-                                            borderRadius: 8,
-                                            cursor: "pointer"
+                                            width: "100%",
+                                            padding: "14px 16px",
+                                            background: t.inputBg || t.bg,
+                                            border: t.border,
+                                            borderRadius: 12,
+                                            color: t.text,
+                                            cursor: "pointer",
+                                            textAlign: "left",
+                                            display: "flex",
+                                            alignItems: "center",
+                                            gap: 12,
+                                            marginBottom: 16
+                                        }}
+                                        onClick={() => {
+                                            if (isGroup) {
+                                                setPinNotifyStep(true);
+                                            } else {
+                                                executePin(pinScopePromptMsg, "shared", true);
+                                            }
                                         }}
                                     >
-                                        + Add
+                                        <span style={{ fontSize: 20 }}>👥</span>
+                                        <div>
+                                            <div style={{ fontSize: 14, fontWeight: 600 }}>
+                                                {isGroup ? "Pin for everyone" : "Pin for both of us"}
+                                            </div>
+                                            <div style={{ fontSize: 12, color: t.textMuted }}>Visible to everyone in chat</div>
+                                        </div>
                                     </button>
-                                </div>
-                            ))}
-                            {addMemberQuery.trim() && addMemberResults.length === 0 && (
-                                <div style={{ textAlign: "center", padding: 20, color: t.textMuted, fontSize: 12 }}>
-                                    No non-member public accounts found.
-                                </div>
-                            )}
-                            {!addMemberQuery.trim() && (
-                                <div style={{ textAlign: "center", padding: 20, color: t.textMuted, fontSize: 12 }}>
-                                    Type a username or display name to search users to add.
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                </div>
-            )}
+                                )}
 
-            {/* User Profile Modal */}
-            {viewingParticipantProfile && (
-                <div
-                    style={{
-                        position: "fixed",
-                        inset: 0,
-                        zIndex: 9999,
-                        background: "rgba(0, 0, 0, 0.65)",
-                        backdropFilter: "blur(8px)",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        padding: 20
-                    }}
-                    onClick={() => setViewingParticipantProfile(null)}
-                >
-                    <div
-                        style={{
-                            background: t.cardBg,
-                            border: t.border,
-                            borderRadius: 24,
-                            width: "100%",
-                            maxWidth: 400,
-                            padding: 24,
-                            boxShadow: "0 20px 50px rgba(0,0,0,0.5)",
-                            position: "relative",
-                            display: "flex",
-                            flexDirection: "column",
-                            alignItems: "center",
-                            textAlign: "center"
-                        }}
-                        onClick={(e) => e.stopPropagation()}
-                    >
-                        <button
-                            type="button"
-                            onClick={() => setViewingParticipantProfile(null)}
-                            style={{
-                                position: "absolute",
-                                top: 16,
-                                right: 16,
-                                background: "none",
-                                border: "none",
-                                color: t.textMuted,
-                                fontSize: 18,
-                                cursor: "pointer",
-                                fontWeight: 700
-                            }}
-                        >
-                            ✕
-                        </button>
+                                <button
+                                    style={{
+                                        width: "100%",
+                                        padding: "10px",
+                                        background: "none",
+                                        border: "none",
+                                        color: t.textMuted,
+                                        cursor: "pointer",
+                                        fontSize: 14,
+                                        fontWeight: 500
+                                    }}
+                                    onClick={() => { setPinScopePromptMsg(null); setPinNotifyStep(false); }}
+                                >
+                                    Cancel
+                                </button>
+                            </>
+                        ) : (
+                            <>
+                                <h3 style={{ margin: "0 0 8px", fontSize: 18, color: t.text, fontWeight: 700 }}>Notify Members?</h3>
+                                <p style={{ margin: "0 0 20px", fontSize: 13, color: t.textMuted, lineHeight: 1.4 }}>
+                                    Choose whether to notify all group members about this pin.
+                                </p>
 
-                        <div style={{
-                            width: 80,
-                            height: 80,
-                            borderRadius: "50%",
-                            background: "linear-gradient(135deg, #0284c7, #6366f1)",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            color: "white",
-                            fontSize: 28,
-                            fontWeight: 800,
-                            marginBottom: 14,
-                            position: "relative"
-                        }}>
-                            {viewingParticipantProfile.avatar_url ? (
-                                <img src={getAssetUrl(viewingParticipantProfile.avatar_url)} alt="" style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} />
-                            ) : (
-                                (viewingParticipantProfile.display_name || viewingParticipantProfile.username)?.[0]?.toUpperCase() || "@"
-                            )}
-                            {viewingParticipantProfile.status === "online" && (
-                                <div style={{ position: "absolute", bottom: 2, right: 2, width: 14, height: 14, borderRadius: "50%", background: "#34A853", border: `2px solid ${t.cardBg}` }} />
-                            )}
-                        </div>
+                                <button
+                                    style={{
+                                        width: "100%",
+                                        padding: "14px 16px",
+                                        background: t.inputBg || t.bg,
+                                        border: t.border,
+                                        borderRadius: 12,
+                                        color: t.text,
+                                        cursor: "pointer",
+                                        textAlign: "left",
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 12,
+                                        marginBottom: 10
+                                    }}
+                                    onClick={() => executePin(pinScopePromptMsg, "shared", true)}
+                                >
+                                    <span style={{ fontSize: 20 }}>🔔</span>
+                                    <div>
+                                        <div style={{ fontSize: 14, fontWeight: 600 }}>Notify members</div>
+                                        <div style={{ fontSize: 12, color: t.textMuted }}>Send notification to all group members</div>
+                                    </div>
+                                </button>
 
-                        <h3 style={{ margin: "0 0 2px", fontSize: 18, fontWeight: 800, color: t.text }}>
-                            {viewingParticipantProfile.display_name || viewingParticipantProfile.username}
-                        </h3>
-                        <div style={{ fontSize: 13, color: t.textMuted, marginBottom: 14 }}>
-                            @{viewingParticipantProfile.username}
-                        </div>
+                                <button
+                                    style={{
+                                        width: "100%",
+                                        padding: "14px 16px",
+                                        background: t.inputBg || t.bg,
+                                        border: t.border,
+                                        borderRadius: 12,
+                                        color: t.text,
+                                        cursor: "pointer",
+                                        textAlign: "left",
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 12,
+                                        marginBottom: 16
+                                    }}
+                                    onClick={() => executePin(pinScopePromptMsg, "shared", false)}
+                                >
+                                    <span style={{ fontSize: 20 }}>🔕</span>
+                                    <div>
+                                        <div style={{ fontSize: 14, fontWeight: 600 }}>Silent pin</div>
+                                        <div style={{ fontSize: 12, color: t.textMuted }}>Pin without sending a notification</div>
+                                    </div>
+                                </button>
 
-                        {/* Bio / About Section */}
-                        <div style={{
-                            width: "100%",
-                            background: "rgba(120, 120, 120, 0.08)",
-                            border: t.border,
-                            borderRadius: 14,
-                            padding: "12px 14px",
-                            marginBottom: 18,
-                            textAlign: "left"
-                        }}>
-                            <div style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.5px", color: t.textMuted, marginBottom: 4 }}>
-                                About / Bio
-                            </div>
-                            <div style={{ fontSize: 13, color: t.text, lineHeight: 1.45, fontStyle: viewingParticipantProfile.bio ? "normal" : "italic", opacity: viewingParticipantProfile.bio ? 1 : 0.6 }}>
-                                {viewingParticipantProfile.bio || "No bio added yet."}
-                            </div>
-                        </div>
-
-                        {viewingParticipantProfile.user_id && viewingParticipantProfile.user_id !== user.userId && (
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    handleStartConversation({
-                                        user_id: viewingParticipantProfile.user_id,
-                                        username: viewingParticipantProfile.username,
-                                        display_name: viewingParticipantProfile.display_name,
-                                        avatar_url: viewingParticipantProfile.avatar_url
-                                    });
-                                    setViewingParticipantProfile(null);
-                                }}
-                                style={{
-                                    width: "100%",
-                                    padding: "11px",
-                                    borderRadius: 12,
-                                    background: t.accent,
-                                    color: "white",
-                                    border: "none",
-                                    fontWeight: 800,
-                                    fontSize: 13,
-                                    cursor: "pointer",
-                                    boxShadow: "0 4px 14px rgba(2, 132, 199, 0.3)"
-                                }}
-                            >
-                                Send Direct Message
-                            </button>
+                                <button
+                                    style={{
+                                        width: "100%",
+                                        padding: "10px",
+                                        background: "none",
+                                        border: "none",
+                                        color: t.textMuted,
+                                        cursor: "pointer",
+                                        fontSize: 14,
+                                        fontWeight: 500
+                                    }}
+                                    onClick={() => setPinNotifyStep(false)}
+                                >
+                                    Back
+                                </button>
+                            </>
                         )}
                     </div>
-                </div>
-            )}
-
-            {/* Participant Right-Click Context Menu */}
-            {participantContextMenu && (
-                <div
-                    style={{
-                        position: "fixed",
-                        top: participantContextMenu.y,
-                        left: Math.min(participantContextMenu.x, window.innerWidth - 180),
-                        background: t.cardBg,
-                        border: t.border,
-                        borderRadius: 14,
-                        boxShadow: "0 10px 30px rgba(0,0,0,0.5)",
-                        padding: "6px",
-                        zIndex: 10000,
-                        minWidth: 160,
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 2
-                    }}
-                    onClick={(e) => e.stopPropagation()}
-                >
-                    <div style={{ padding: "6px 10px", fontSize: 11, fontWeight: 800, color: t.textMuted, borderBottom: t.border, marginBottom: 4 }}>
-                        @{participantContextMenu.participant.username}
-                    </div>
-
-                    {!((participantContextMenu.participant.user_id || participantContextMenu.participant.id) === user.userId) && (
-                        <button
-                            type="button"
-                            onClick={() => {
-                                handleStartConversation({
-                                    user_id: participantContextMenu.participant.user_id || participantContextMenu.participant.id,
-                                    username: participantContextMenu.participant.username,
-                                    display_name: participantContextMenu.participant.display_name || participantContextMenu.participant.username,
-                                    avatar_url: participantContextMenu.participant.avatar_url
-                                });
-                                setParticipantContextMenu(null);
-                            }}
-                            style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 8,
-                                width: "100%",
-                                padding: "8px 10px",
-                                background: "none",
-                                border: "none",
-                                color: t.text,
-                                fontSize: 12,
-                                fontWeight: 700,
-                                borderRadius: 8,
-                                cursor: "pointer",
-                                textAlign: "left"
-                            }}
-                        >
-                            <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
-                            Direct Message
-                        </button>
-                    )}
-
-                    {isUserGroupAdmin(activeConv, user.userId) &&
-                        !((participantContextMenu.participant.user_id || participantContextMenu.participant.id) === user.userId) &&
-                        !((participantContextMenu.participant.user_id || participantContextMenu.participant.id) === activeConv.creator_id) && (
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    const pId = participantContextMenu.participant.user_id || participantContextMenu.participant.id;
-                                    const currentlyAdmin = (participantContextMenu.participant.role === "admin" || (groupAdminsMap[activeConv.id] || []).includes(pId));
-                                    handleMakeAdmin(activeConv.id, pId, !currentlyAdmin);
-                                    setParticipantContextMenu(null);
-                                }}
-                                style={{
-                                    display: "flex",
-                                    alignItems: "center",
-                                    gap: 8,
-                                    width: "100%",
-                                    padding: "8px 10px",
-                                    background: "rgba(56, 189, 248, 0.12)",
-                                    border: "none",
-                                    color: theme === "dark" ? "#38bdf8" : t.accent,
-                                    fontSize: 12,
-                                    fontWeight: 800,
-                                    borderRadius: 8,
-                                    cursor: "pointer",
-                                    textAlign: "left"
-                                }}
-                            >
-                                <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
-                                {(participantContextMenu.participant.role === "admin" || (groupAdminsMap[activeConv.id] || []).includes(participantContextMenu.participant.user_id || participantContextMenu.participant.id)) ? "Dismiss as Admin" : "Make Admin"}
-                            </button>
-                        )}
-
-                    <button
-                        type="button"
-                        onClick={() => {
-                            setViewingParticipantProfile({
-                                user_id: participantContextMenu.participant.user_id || participantContextMenu.participant.id,
-                                display_name: participantContextMenu.participant.display_name || participantContextMenu.participant.username,
-                                username: participantContextMenu.participant.username,
-                                bio: participantContextMenu.participant.bio,
-                                avatar_url: participantContextMenu.participant.avatar_url,
-                                status: participantContextMenu.participant.status || "offline",
-                                last_seen: participantContextMenu.participant.last_seen
-                            });
-                            setParticipantContextMenu(null);
-                        }}
-                        style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 8,
-                            width: "100%",
-                            padding: "8px 10px",
-                            background: "none",
-                            border: "none",
-                            color: t.text,
-                            fontSize: 12,
-                            fontWeight: 700,
-                            borderRadius: 8,
-                            cursor: "pointer",
-                            textAlign: "left"
-                        }}
-                    >
-                        <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
-                        View Profile
-                    </button>
                 </div>
             )}
         </div>

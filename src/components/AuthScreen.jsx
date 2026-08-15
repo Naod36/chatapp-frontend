@@ -332,10 +332,10 @@ export default function AuthScreen({ onAuthSuccess }) {
                     const ny = drawY / h; // 0.0 (top) to 1.0 (bottom)
 
                     // Anchors the core column: far right (80%) at bottom, expanding leftwards to 32% at the top
-                    const smokeStart = w * (0.32 + ny * 0.48);
+                    const _smokeStart = w * (0.32 + ny * 0.48);
 
                     // Transition dispersion width: super wide (330px) at top, tight and crisp (110px) at bottom
-                    const dispersionWidth = 110 + (1 - ny) * 220;
+                    const _dispersionWidth = 110 + (1 - ny) * 220;
 
                     // const distFactor = (drawX - smokeStart) / dispersionWidth;
 
@@ -435,7 +435,7 @@ export default function AuthScreen({ onAuthSuccess }) {
             wrap.removeEventListener("mouseleave", handleLeave);
             wrap.removeEventListener("click", handleClick);
         };
-    }, [theme]);
+    }, [theme, t.dotColor]);
 
     const handlePageMouseMove = (e) => {
         pageMouse.current.x = e.clientX;
