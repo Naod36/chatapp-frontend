@@ -1,4 +1,6 @@
+import { useState, useEffect } from "react";
 import { formatTime, renderMessageStatus, getAssetUrl } from "../../../utils/theme";
+import { apiFetch, API_BASE } from "../../../services/api";
 
 export default function ConversationList({
     leftSidebarWidth,
@@ -35,6 +37,19 @@ export default function ConversationList({
     isResizingLeft,
     typingUsers = {}
 }) {
+    const [latestRelease, setLatestRelease] = useState(null);
+    const [isLoadingRelease, setIsLoadingRelease] = useState(false);
+
+    useEffect(() => {
+        if (activeRailTab === "download") {
+            setIsLoadingRelease(true);
+            apiFetch("/releases/latest?platform=android")
+                .then(data => setLatestRelease(data))
+                .catch(err => console.error("Error fetching latest release:", err))
+                .finally(() => setIsLoadingRelease(false));
+        }
+    }, [activeRailTab]);
+
     const checkIsTyping = (convId) => {
         const convTypists = typingUsers?.[convId];
         if (!convTypists) return false;
@@ -944,6 +959,128 @@ export default function ConversationList({
 
                     <div style={{ marginTop: "auto", paddingTop: 28, fontSize: 11, color: t.textMuted, textAlign: "center", opacity: 0.6 }}>
                         FlowChat Client v2.5.0
+                    </div>
+                </div>
+            )}
+
+            {activeRailTab === "download" && (
+                <div style={{ padding: "24px 20px", display: "flex", flexDirection: "column", height: "100%", overflowY: "auto" }}>
+                    <div style={{ marginBottom: 24 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+                            <div style={{
+                                width: 36,
+                                height: 36,
+                                borderRadius: 10,
+                                background: "linear-gradient(135deg, #34A853, #10b981)",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                color: "#fff"
+                            }}>
+                                <svg width="22" height="22" fill="currentColor" viewBox="0 0 24 24">
+                                    <path d="M17.5 12a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm-11 0a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm11.378-4.44l1.802-3.12a.5.5 0 00-.866-.5l-1.83 3.17A11.196 11.196 0 0012 6.002a11.196 11.196 0 00-4.984 1.108L5.186 3.94a.5.5 0 10-.866.5l1.802 3.12A10.96 10.96 0 002 14h20a10.96 10.96 0 00-4.122-6.44z" />
+                                </svg>
+                            </div>
+                            <div>
+                                <h2 style={{ margin: 0, fontSize: 19, fontWeight: "800", color: t.text, letterSpacing: "-0.3px" }}>Android App</h2>
+                                <div style={{ fontSize: 11.5, color: t.textMuted }}>Get the native FlowChat experience</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {isLoadingRelease ? (
+                        <div style={{ textAlign: "center", padding: "40px 0", color: t.textMuted, fontSize: 12 }}>
+                            Loading latest APK release...
+                        </div>
+                    ) : latestRelease ? (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+                            <div style={{
+                                background: t.cardBg,
+                                borderRadius: 16,
+                                border: t.border,
+                                padding: 20,
+                                boxShadow: "0 10px 25px -5px rgba(0,0,0,0.1)",
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: 16
+                            }}>
+                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                                    <div>
+                                        <div style={{ fontSize: 15, fontWeight: "800", color: t.text }}>FlowChat Mobile</div>
+                                        <div style={{ fontSize: 11.5, color: t.textMuted, marginTop: 2 }}>Official Android Release</div>
+                                    </div>
+                                    <span style={{
+                                        background: "rgba(56, 189, 248, 0.15)",
+                                        color: "#38bdf8",
+                                        border: "1px solid rgba(56, 189, 248, 0.4)",
+                                        fontSize: 11,
+                                        fontWeight: 800,
+                                        padding: "4px 10px",
+                                        borderRadius: 20
+                                    }}>
+                                        v{latestRelease.version}
+                                    </span>
+                                </div>
+
+                                {latestRelease.release_notes && (
+                                    <div style={{
+                                        background: theme === "dark" ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.02)",
+                                        borderRadius: 12,
+                                        padding: 12,
+                                        fontSize: 12,
+                                        color: t.text,
+                                        lineHeight: 1.5
+                                    }}>
+                                        <div style={{ fontSize: 10.5, fontWeight: 700, color: t.textMuted, textTransform: "uppercase", marginBottom: 4 }}>What's New</div>
+                                        {latestRelease.release_notes}
+                                    </div>
+                                )}
+
+                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 11, color: t.textMuted }}>
+                                    <span>Build #{latestRelease.build_number}</span>
+                                    <span>{latestRelease.download_count || 0} Downloads</span>
+                                </div>
+
+                                <a
+                                    href={`${API_BASE}/releases/${latestRelease.id}/download`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        justifyContent: "center",
+                                        gap: 8,
+                                        width: "100%",
+                                        padding: "13px",
+                                        borderRadius: 12,
+                                        background: "linear-gradient(135deg, #10b981, #059669)",
+                                        color: "#ffffff",
+                                        fontWeight: "800",
+                                        fontSize: 13.5,
+                                        textDecoration: "none",
+                                        boxShadow: "0 6px 20px rgba(16, 185, 129, 0.3)",
+                                        transition: "transform 0.2s ease"
+                                    }}
+                                >
+                                    <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                    </svg>
+                                    <span>Download APK</span>
+                                </a>
+                            </div>
+
+                            <div style={{ fontSize: 11.5, color: t.textMuted, lineHeight: 1.5, padding: "0 4px" }}>
+                                💡 <strong>Installation Note:</strong> After downloading the <code>.apk</code> file on your Android device, tap it to install. If prompted, enable "Allow installation from unknown sources".
+                            </div>
+                        </div>
+                    ) : (
+                        <div style={{ textAlign: "center", padding: "40px 0", color: t.textMuted, fontSize: 12 }}>
+                            No Android releases currently published.
+                        </div>
+                    )}
+
+                    <div style={{ marginTop: "auto", paddingTop: 28, fontSize: 11, color: t.textMuted, textAlign: "center", opacity: 0.6 }}>
+                        FlowChat Distribution System
                     </div>
                 </div>
             )}
