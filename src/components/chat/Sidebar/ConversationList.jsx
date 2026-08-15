@@ -1067,6 +1067,38 @@ export default function ConversationList({
                                     </svg>
                                     <span>Download APK</span>
                                 </a>
+
+                                {/* QR Code Section */}
+                                <div style={{
+                                    display: "flex",
+                                    flexDirection: "column",
+                                    alignItems: "center",
+                                    gap: 10,
+                                    paddingTop: 14,
+                                    borderTop: t.border
+                                }}>
+                                    <div style={{ fontSize: 11.5, fontWeight: 700, color: t.textMuted, textAlign: "center" }}>
+                                        📱 Scan QR Code to Download on Phone
+                                    </div>
+                                    <div style={{
+                                        background: "#ffffff",
+                                        padding: 10,
+                                        borderRadius: 16,
+                                        boxShadow: "0 4px 14px rgba(0,0,0,0.15)",
+                                        display: "flex",
+                                        alignItems: "center",
+                                        justifyContent: "center"
+                                    }}>
+                                        <img
+                                            src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(`${API_BASE}/releases/${latestRelease.id}/download`)}`}
+                                            alt="Scan to Download APK"
+                                            style={{ width: 150, height: 150, borderRadius: 8, display: "block" }}
+                                        />
+                                    </div>
+                                    <div style={{ fontSize: 10.5, color: t.textMuted, textAlign: "center", maxWidth: 220 }}>
+                                        Point your mobile camera at the QR code to instantly start download
+                                    </div>
+                                </div>
                             </div>
 
                             <div style={{ fontSize: 11.5, color: t.textMuted, lineHeight: 1.5, padding: "0 4px" }}>
