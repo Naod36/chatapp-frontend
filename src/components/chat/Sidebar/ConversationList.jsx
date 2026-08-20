@@ -42,11 +42,16 @@ export default function ConversationList({
 
     useEffect(() => {
         if (activeRailTab === "download") {
-            setIsLoadingRelease(true);
-            apiFetch("/releases/latest?platform=android")
-                .then(data => setLatestRelease(data))
-                .catch(err => console.error("Error fetching latest release:", err))
-                .finally(() => setIsLoadingRelease(false));
+            const fetchRelease = (showLoading = false) => {
+                if (showLoading) setIsLoadingRelease(true);
+                apiFetch("/releases/latest?platform=android")
+                    .then(data => setLatestRelease(data))
+                    .catch(err => console.error("Error fetching latest release:", err))
+                    .finally(() => setIsLoadingRelease(false));
+            };
+            fetchRelease(true);
+            const interval = setInterval(() => fetchRelease(false), 8000);
+            return () => clearInterval(interval);
         }
     }, [activeRailTab]);
 
@@ -1045,6 +1050,14 @@ export default function ConversationList({
                                     href={`${API_BASE}/releases/${latestRelease.id}/download`}
                                     target="_blank"
                                     rel="noreferrer"
+                                    onClick={() => {
+                                        setLatestRelease(prev => prev ? { ...prev, download_count: (Number(prev.download_count) || 0) + 1 } : prev);
+                                        setTimeout(() => {
+                                            apiFetch("/releases/latest?platform=android")
+                                                .then(data => setLatestRelease(data))
+                                                .catch(() => {});
+                                        }, 1500);
+                                    }}
                                     style={{
                                         display: "flex",
                                         alignItems: "center",

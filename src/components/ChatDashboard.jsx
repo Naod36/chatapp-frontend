@@ -907,10 +907,28 @@ export default function ChatDashboard({ user, onLogout }) {
                 if (!history || !history.length) return;
                 const incoming = history.map(m => ({ ...m, id: m.message_id || m.id }));
                 setMessages(prev => {
-                    const existingIds = new Set(prev.map(m => m.id || m.message_id));
-                    const newOnes = incoming.filter(m => !existingIds.has(m.id));
-                    if (newOnes.length === 0) return prev;
-                    return [...prev, ...newOnes];
+                    const existingIds = new Set(prev.map(m => String(m.id || m.message_id).toLowerCase()));
+                    const newOnes = incoming.filter(m => !existingIds.has(String(m.id || m.message_id).toLowerCase()));
+                    
+                    if (newOnes.length > 0) {
+                        return [...prev, ...newOnes];
+                    }
+
+                    // Sync updated message statuses (e.g. sent -> delivered -> read) from server
+                    if (prev.length === incoming.length) {
+                        let hasChanged = false;
+                        for (let i = 0; i < prev.length; i++) {
+                            if (prev[i].status !== incoming[i].status) {
+                                hasChanged = true;
+                                break;
+                            }
+                        }
+                        if (hasChanged) return incoming;
+                    } else if (incoming.length > prev.length) {
+                        return incoming;
+                    }
+
+                    return prev;
                 });
             } catch (err) {
                 // silent — WS is primary; this is a fallback
@@ -949,7 +967,8 @@ export default function ChatDashboard({ user, onLogout }) {
             (data) => {
                 console.log("WebSocket event:", data);
                 if (data.event === "new_message") {
-                    const isCurrentActive = activeConvRef.current && activeConvRef.current.id === data.conversation_id;
+                    const isCurrentActive = activeConvRef.current && 
+                        String(activeConvRef.current.id).toLowerCase() === String(data.conversation_id).toLowerCase();
 
                     if (data.sender_id !== user.userId) {
                         if (soundEnabled) {
@@ -974,7 +993,7 @@ export default function ChatDashboard({ user, onLogout }) {
 
                     // Update conversation list item in real-time & move to top
                     setConversations(prev => {
-                        const targetIndex = prev.findIndex(c => c.id === data.conversation_id);
+                        const targetIndex = prev.findIndex(c => String(c.id).toLowerCase() === String(data.conversation_id).toLowerCase());
                         let updatedTarget = null;
 
                         if (targetIndex !== -1) {
@@ -997,7 +1016,7 @@ export default function ChatDashboard({ user, onLogout }) {
                         if (!updatedTarget) return prev;
 
                         // Separate Saved Messages from other conversations safely
-                        const rest = prev.filter(c => c.id !== data.conversation_id);
+                        const rest = prev.filter(c => String(c.id).toLowerCase() !== String(data.conversation_id).toLowerCase());
                         const savedConv = rest.find(c => c.id === "virtual-saved-messages" || (c.type === "direct" && !c.other_participant));
                         const remaining = rest.filter(c => c !== savedConv);
 
@@ -1014,7 +1033,7 @@ export default function ChatDashboard({ user, onLogout }) {
                     if (isCurrentActive) {
                         setMessages(prev => {
                             // Don't add if message with exact ID is already in list
-                            if (prev.some(m => (m.id || m.message_id) === data.message_id)) return prev;
+                            if (prev.some(m => String(m.id || m.message_id).toLowerCase() === String(data.message_id).toLowerCase())) return prev;
 
                             // If sent by current user, replace optimistic temporary message if present
                             if (data.sender_id === user.userId) {
@@ -1089,7 +1108,7 @@ export default function ChatDashboard({ user, onLogout }) {
 
                     setConversations(prev => {
                         return prev.map(c => {
-                            if (c.id === data.conversation_id && c.last_message && c.last_message.sender_id === user.userId) {
+                            if (String(c.id).toLowerCase() === String(data.conversation_id).toLowerCase() && c.last_message && c.last_message.sender_id === user.userId) {
                                 return {
                                     ...c,
                                     last_message: {
@@ -1103,7 +1122,7 @@ export default function ChatDashboard({ user, onLogout }) {
                         });
                     });
                 } else if (data.event === "message_delivered") {
-                    if (activeConvRef.current && activeConvRef.current.id === data.conversation_id) {
+                    if (activeConvRef.current && String(activeConvRef.current.id).toLowerCase() === String(data.conversation_id).toLowerCase()) {
                         setMessages(prev => {
                             return prev.map(m => {
                                 if (m.sender_id === user.userId && m.status !== "read") {
@@ -1116,7 +1135,7 @@ export default function ChatDashboard({ user, onLogout }) {
 
                     setConversations(prev => {
                         return prev.map(c => {
-                            if (c.id === data.conversation_id && c.last_message && c.last_message.sender_id === user.userId && c.last_message.status !== "read") {
+                            if (String(c.id).toLowerCase() === String(data.conversation_id).toLowerCase() && c.last_message && c.last_message.sender_id === user.userId && c.last_message.status !== "read") {
                                 return {
                                     ...c,
                                     last_message: {
@@ -1129,7 +1148,7 @@ export default function ChatDashboard({ user, onLogout }) {
                         });
                     });
                 } else if (data.event === "read_update") {
-                    if (activeConvRef.current && activeConvRef.current.id === data.conversation_id) {
+                    if (activeConvRef.current && String(activeConvRef.current.id).toLowerCase() === String(data.conversation_id).toLowerCase()) {
                         setMessages(prev => {
                             return prev.map(m => {
                                 if (m.sender_id === user.userId) {
@@ -1142,7 +1161,7 @@ export default function ChatDashboard({ user, onLogout }) {
 
                     setConversations(prev => {
                         return prev.map(c => {
-                            if (c.id === data.conversation_id && c.last_message && c.last_message.sender_id === user.userId) {
+                            if (String(c.id).toLowerCase() === String(data.conversation_id).toLowerCase() && c.last_message && c.last_message.sender_id === user.userId) {
                                 return {
                                     ...c,
                                     last_message: {
