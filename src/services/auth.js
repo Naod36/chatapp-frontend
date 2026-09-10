@@ -5,7 +5,7 @@ import { API_BASE } from "./api";
  * -------------
  * Handles signin, signup, and token state.
  */
-async function handleResponse(response, defaultMsg) {
+async function handleResponse(response, defaultMsg, hideServerDetails = false) {
   let data;
   const contentType = response.headers.get("content-type");
   if (contentType && contentType.includes("application/json")) {
@@ -19,6 +19,9 @@ async function handleResponse(response, defaultMsg) {
   }
 
   if (!response.ok) {
+    if (hideServerDetails && response.status >= 500) {
+      throw new Error(defaultMsg);
+    }
     if (!data) {
       throw new Error(
         defaultMsg ||
@@ -50,7 +53,11 @@ export const authService = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email }),
     });
-    return handleResponse(response, "Unable to request a password reset.");
+    return handleResponse(
+      response,
+      "Password reset is temporarily unavailable. Please try again later.",
+      true,
+    );
   },
 
   async resetPassword(token, password) {
