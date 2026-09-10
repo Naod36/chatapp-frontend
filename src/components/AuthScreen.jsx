@@ -153,13 +153,15 @@ export default function AuthScreen({
   const [password, setPassword] = useState("");
   const [passwordConfirmation, setPasswordConfirmation] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmationPassword, setShowConfirmationPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState(null);
 
   // Google OAuth Handler
   const handleGoogleLogin = useGoogleLogin({
     onSuccess: async (tokenResponse) => {
-      setLoading(true);
+      setGoogleLoading(true);
       setError(null);
       try {
         const credential =
@@ -169,10 +171,13 @@ export default function AuthScreen({
       } catch (err) {
         setError(err.message || "Google Sign In failed");
       } finally {
-        setLoading(false);
+        setGoogleLoading(false);
       }
     },
-    onError: () => setError("Google Sign In was cancelled or failed"),
+    onError: () => {
+      setGoogleLoading(false);
+      setError("Google Sign In was cancelled or failed");
+    },
   });
 
   const rootRef = useRef(null);
@@ -745,10 +750,10 @@ export default function AuthScreen({
                 className="fx-stagger"
                 style={oAuthButtonStyle(t)}
                 onClick={() => handleGoogleLogin()}
-                disabled={loading}
+                disabled={loading || googleLoading}
               >
                 <GoogleIcon />
-                {loading
+                {googleLoading
                   ? "Connecting to Google..."
                   : mode === "signup"
                     ? "Sign up with Google"
@@ -889,8 +894,8 @@ export default function AuthScreen({
               <PasswordField
                 value={passwordConfirmation}
                 onChange={setPasswordConfirmation}
-                showPassword={false}
-                setShowPassword={() => {}}
+                showPassword={showConfirmationPassword}
+                setShowPassword={setShowConfirmationPassword}
                 t={t}
                 placeholder="Confirm your new password"
               />
