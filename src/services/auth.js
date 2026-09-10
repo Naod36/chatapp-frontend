@@ -6,143 +6,196 @@ import { API_BASE } from "./api";
  * Handles signin, signup, and token state.
  */
 async function handleResponse(response, defaultMsg) {
-    let data;
-    const contentType = response.headers.get("content-type");
-    if (contentType && contentType.includes("application/json")) {
-        try {
-            data = await response.json();
-        } catch {
-            data = null;
-        }
-    } else {
-        data = await response.text().catch(() => "");
+  let data;
+  const contentType = response.headers.get("content-type");
+  if (contentType && contentType.includes("application/json")) {
+    try {
+      data = await response.json();
+    } catch {
+      data = null;
     }
+  } else {
+    data = await response.text().catch(() => "");
+  }
 
-    if (!response.ok) {
-        if (!data) {
-            throw new Error(defaultMsg || "Authentication server error. Please check your connection.");
-        }
-        if (typeof data === "object") {
-            const msg = data.message || data.error || defaultMsg;
-            throw new Error(msg);
-        }
-        if (typeof data === "string" && data.trim()) {
-            if (data.includes("<html") || data.includes("<!DOCTYPE")) {
-                throw new Error(defaultMsg || "Authentication failed due to a server error.");
-            }
-            throw new Error(data.trim());
-        }
-        throw new Error(defaultMsg);
+  if (!response.ok) {
+    if (!data) {
+      throw new Error(
+        defaultMsg ||
+          "Authentication server error. Please check your connection.",
+      );
     }
+    if (typeof data === "object") {
+      const msg = data.message || data.error || defaultMsg;
+      throw new Error(msg);
+    }
+    if (typeof data === "string" && data.trim()) {
+      if (data.includes("<html") || data.includes("<!DOCTYPE")) {
+        throw new Error(
+          defaultMsg || "Authentication failed due to a server error.",
+        );
+      }
+      throw new Error(data.trim());
+    }
+    throw new Error(defaultMsg);
+  }
 
-    return data;
+  return data;
 }
 
 export const authService = {
-    async login(identifier, password) {
-        try {
-            const response = await fetch(`${API_BASE}/login`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({ identifier, password }),
-            });
+  async requestPasswordReset(email) {
+    const response = await fetch(`${API_BASE}/auth/forgot-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+    return handleResponse(response, "Unable to request a password reset.");
+  },
 
-            const data = await handleResponse(response, "Invalid credentials. Please try again.");
+  async resetPassword(token, password) {
+    const response = await fetch(`${API_BASE}/auth/reset-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token, password }),
+    });
+    return handleResponse(response, "Unable to reset your password.");
+  },
 
-            // Persist session tokens
-            localStorage.setItem("chat_token", data.token);
-            localStorage.setItem("chat_userId", data.user_id);
-            localStorage.setItem("chat_username", data.username);
+  async login(identifier, password) {
+    try {
+      const response = await fetch(`${API_BASE}/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ identifier, password }),
+      });
 
-            return {
-                ...data,
-                userId: data.user_id
-            };
-        } catch (err) {
-            if (err.name === "TypeError" || (err.message && (err.message.includes("NetworkError") || err.message.includes("Failed to fetch")))) {
-                throw new Error(`Unable to reach the backend server at ${API_BASE}. Please verify the backend service is running.`);
-            }
-            throw err;
-        }
-    },
+      const data = await handleResponse(
+        response,
+        "Invalid credentials. Please try again.",
+      );
 
-    async signup(username, email, password) {
-        try {
-            const response = await fetch(`${API_BASE}/signup`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({ username, email, password }),
-            });
+      // Persist session tokens
+      localStorage.setItem("chat_token", data.token);
+      localStorage.setItem("chat_userId", data.user_id);
+      localStorage.setItem("chat_username", data.username);
 
-            const data = await handleResponse(response, "Could not create account. Please check your details.");
-
-            // Persist session tokens
-            localStorage.setItem("chat_token", data.token);
-            localStorage.setItem("chat_userId", data.user_id);
-            localStorage.setItem("chat_username", data.username);
-
-            return {
-                ...data,
-                userId: data.user_id
-            };
-        } catch (err) {
-            if (err.name === "TypeError" || (err.message && (err.message.includes("NetworkError") || err.message.includes("Failed to fetch")))) {
-                throw new Error(`Unable to reach the backend server at ${API_BASE}. Please verify the backend service is running.`);
-            }
-            throw err;
-        }
-    },
-
-    async googleLogin(credential) {
-        try {
-            const response = await fetch(`${API_BASE}/auth/google`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({ credential }),
-            });
-
-            const data = await handleResponse(response, "Google sign-in failed. Please try again.");
-
-            // Persist session tokens
-            localStorage.setItem("chat_token", data.token);
-            localStorage.setItem("chat_userId", data.user_id);
-            localStorage.setItem("chat_username", data.username);
-
-            return {
-                ...data,
-                userId: data.user_id
-            };
-        } catch (err) {
-            if (err.name === "TypeError" || (err.message && (err.message.includes("NetworkError") || err.message.includes("Failed to fetch")))) {
-                throw new Error(`Unable to reach the backend server at ${API_BASE}. Please verify the backend service is running.`);
-            }
-            throw err;
-        }
-    },
-
-    logout() {
-        localStorage.removeItem("chat_token");
-        localStorage.removeItem("chat_userId");
-        localStorage.removeItem("chat_username");
-    },
-
-    isAuthenticated() {
-        return !!localStorage.getItem("chat_token");
-    },
-
-    getCurrentUser() {
-        const id = localStorage.getItem("chat_userId");
-        return {
-            userId: id,
-            user_id: id,
-            username: localStorage.getItem("chat_username"),
-            token: localStorage.getItem("chat_token")
-        };
+      return {
+        ...data,
+        userId: data.user_id,
+      };
+    } catch (err) {
+      if (
+        err.name === "TypeError" ||
+        (err.message &&
+          (err.message.includes("NetworkError") ||
+            err.message.includes("Failed to fetch")))
+      ) {
+        throw new Error(
+          `Unable to reach the backend server at ${API_BASE}. Please verify the backend service is running.`,
+        );
+      }
+      throw err;
     }
+  },
+
+  async signup(username, email, password) {
+    try {
+      const response = await fetch(`${API_BASE}/signup`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ username, email, password }),
+      });
+
+      const data = await handleResponse(
+        response,
+        "Could not create account. Please check your details.",
+      );
+
+      // Persist session tokens
+      localStorage.setItem("chat_token", data.token);
+      localStorage.setItem("chat_userId", data.user_id);
+      localStorage.setItem("chat_username", data.username);
+
+      return {
+        ...data,
+        userId: data.user_id,
+      };
+    } catch (err) {
+      if (
+        err.name === "TypeError" ||
+        (err.message &&
+          (err.message.includes("NetworkError") ||
+            err.message.includes("Failed to fetch")))
+      ) {
+        throw new Error(
+          `Unable to reach the backend server at ${API_BASE}. Please verify the backend service is running.`,
+        );
+      }
+      throw err;
+    }
+  },
+
+  async googleLogin(credential) {
+    try {
+      const response = await fetch(`${API_BASE}/auth/google`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ credential }),
+      });
+
+      const data = await handleResponse(
+        response,
+        "Google sign-in failed. Please try again.",
+      );
+
+      // Persist session tokens
+      localStorage.setItem("chat_token", data.token);
+      localStorage.setItem("chat_userId", data.user_id);
+      localStorage.setItem("chat_username", data.username);
+
+      return {
+        ...data,
+        userId: data.user_id,
+      };
+    } catch (err) {
+      if (
+        err.name === "TypeError" ||
+        (err.message &&
+          (err.message.includes("NetworkError") ||
+            err.message.includes("Failed to fetch")))
+      ) {
+        throw new Error(
+          `Unable to reach the backend server at ${API_BASE}. Please verify the backend service is running.`,
+        );
+      }
+      throw err;
+    }
+  },
+
+  logout() {
+    localStorage.removeItem("chat_token");
+    localStorage.removeItem("chat_userId");
+    localStorage.removeItem("chat_username");
+  },
+
+  isAuthenticated() {
+    return !!localStorage.getItem("chat_token");
+  },
+
+  getCurrentUser() {
+    const id = localStorage.getItem("chat_userId");
+    return {
+      userId: id,
+      user_id: id,
+      username: localStorage.getItem("chat_username"),
+      token: localStorage.getItem("chat_token"),
+    };
+  },
 };
