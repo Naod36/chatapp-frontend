@@ -96,7 +96,9 @@ export default function MobileAppGate({ onContinueAnyway }) {
         }}
       >
         <button
-          onClick={() => setTheme((cur) => (cur === "light" ? "dark" : "light"))}
+          onClick={() =>
+            setTheme((cur) => (cur === "light" ? "dark" : "light"))
+          }
           style={{
             position: "absolute",
             top: 20,
@@ -183,7 +185,9 @@ export default function MobileAppGate({ onContinueAnyway }) {
           }}
         >
           {isLoadingRelease ? (
-            <div style={{ padding: "20px 0", color: t.textMuted, fontSize: 13 }}>
+            <div
+              style={{ padding: "20px 0", color: t.textMuted, fontSize: 13 }}
+            >
               Loading latest release...
             </div>
           ) : latestRelease ? (
@@ -202,7 +206,13 @@ export default function MobileAppGate({ onContinueAnyway }) {
                   style={{ width: 150, height: 150, display: "block" }}
                 />
               </div>
-              <div style={{ fontSize: 12, color: t.textMuted, textAlign: "center" }}>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: t.textMuted,
+                  textAlign: "center",
+                }}
+              >
                 Scan with your phone's camera, or tap below
               </div>
               <a
@@ -243,9 +253,15 @@ export default function MobileAppGate({ onContinueAnyway }) {
               </a>
             </>
           ) : (
-            <div style={{ padding: "12px 0", color: t.textMuted, fontSize: 13, textAlign: "center" }}>
-              No Android release is currently published. Please check back
-              soon.
+            <div
+              style={{
+                padding: "12px 0",
+                color: t.textMuted,
+                fontSize: 13,
+                textAlign: "center",
+              }}
+            >
+              No Android release is currently published. Please check back soon.
             </div>
           )}
         </div>
