@@ -2139,7 +2139,9 @@ export default function ConversationList({
                   }}
                 >
                   <span>Build #{latestRelease.build_number}</span>
-                  <span>{latestRelease.download_count || 0} Downloads</span>
+                  <span>
+                    {latestRelease.download_count || 0} Total Downloads
+                  </span>
                 </div>
 
                 <a
