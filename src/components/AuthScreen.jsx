@@ -44,7 +44,7 @@ const THEME = {
   },
 };
 
-const SunIcon = ({ color }) => (
+export const SunIcon = ({ color }) => (
   <svg
     width="18"
     height="18"
@@ -67,7 +67,7 @@ const SunIcon = ({ color }) => (
   </svg>
 );
 
-const MoonIcon = ({ color }) => (
+export const MoonIcon = ({ color }) => (
   <svg
     width="18"
     height="18"

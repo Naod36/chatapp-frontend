@@ -1,12 +1,19 @@
 import { useState, useEffect } from "react";
 import AuthScreen from "./components/AuthScreen";
 import ChatDashboard from "./components/ChatDashboard";
+import MobileAppGate from "./components/MobileAppGate";
 import { authService } from "./services/auth";
+import { isMobileDevice } from "./utils/device";
+
+const MOBILE_CONTINUE_KEY = "flowchat_continue_on_mobile";
 
 function App() {
   const [user, setUser] = useState(null);
   const [resetToken] = useState(() =>
     new URLSearchParams(window.location.search).get("reset_token"),
+  );
+  const [continueOnMobile, setContinueOnMobile] = useState(
+    () => sessionStorage.getItem(MOBILE_CONTINUE_KEY) === "1",
   );
 
   useEffect(() => {
@@ -23,6 +30,17 @@ function App() {
     authService.logout();
     setUser(null);
   };
+
+  if (isMobileDevice() && !continueOnMobile) {
+    return (
+      <MobileAppGate
+        onContinueAnyway={() => {
+          sessionStorage.setItem(MOBILE_CONTINUE_KEY, "1");
+          setContinueOnMobile(true);
+        }}
+      />
+    );
+  }
 
   if (!user) {
     return (
