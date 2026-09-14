@@ -150,11 +150,15 @@ export default function ConversationList({
                   }}
                 >
                   <img
-                    src="/app-icon.png"
+                    src={
+                      theme === "dark"
+                        ? "/logo-mark-dark-theme.png"
+                        : "/logo-mark-light-theme.png"
+                    }
                     alt=""
-                    width={20}
-                    height={20}
-                    style={{ borderRadius: 5, flexShrink: 0 }}
+                    width={18}
+                    height={18}
+                    style={{ flexShrink: 0 }}
                   />
                   FlowChat
                 </span>
