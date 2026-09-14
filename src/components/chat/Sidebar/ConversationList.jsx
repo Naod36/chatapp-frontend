@@ -140,16 +140,23 @@ export default function ConversationList({
               {syncState === "ready" && (
                 <span
                   style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
                     fontSize: 16,
                     fontWeight: 900,
                     letterSpacing: "0.2px",
-                    background: "linear-gradient(135deg, #38bdf8, #818cf8)",
-                    WebkitBackgroundClip: "text",
-                    WebkitTextFillColor: "transparent",
-                    textTransform: "uppercase",
+                    color: t.accent,
                   }}
                 >
-                  " FlowChat
+                  <img
+                    src="/app-icon.png"
+                    alt=""
+                    width={20}
+                    height={20}
+                    style={{ borderRadius: 5, flexShrink: 0 }}
+                  />
+                  FlowChat
                 </span>
               )}
             </div>
