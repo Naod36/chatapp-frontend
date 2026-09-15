@@ -177,6 +177,19 @@ export default function ChatDashboard({ user, onLogout }) {
 
     const isBlocked = (userId) => blockedUserIds.includes(String(userId));
     const isBlockedBy = (userId) => blockedByUserIds.includes(String(userId));
+    const activeConvForDisplay = activeConv && activeConv.type === "direct" &&
+        isBlockedBy(activeConv.other_participant?.user_id || activeConv.other_participant?.id)
+        ? {
+            ...activeConv,
+            display_name: "Person Not Available",
+            avatar_url: null,
+            other_participant: {
+                ...activeConv.other_participant,
+                display_name: "Person Not Available",
+                avatar_url: null,
+            },
+        }
+        : activeConv;
 
     const refreshBlockState = async () => {
         try {
@@ -2073,8 +2086,9 @@ export default function ChatDashboard({ user, onLogout }) {
                 searchQuery={searchQuery}
                 setSearchQuery={setSearchQuery}
                 conversations={conversations}
+                isBlockedBy={isBlockedBy}
                 isConvPinned={isConvPinned}
-                activeConv={activeConv}
+                activeConv={activeConvForDisplay}
                 handleSelectConversation={handleSelectConversation}
                 user={user}
                 convoTab={convoTab}
@@ -2102,7 +2116,7 @@ export default function ChatDashboard({ user, onLogout }) {
 
             {/* 3. Center Messaging Pane */}
             <ChatArea
-                activeConv={activeConv}
+                activeConv={activeConvForDisplay}
                 theme={theme}
                 themeTokens={t}
                 isInChatSearchOpen={isInChatSearchOpen}

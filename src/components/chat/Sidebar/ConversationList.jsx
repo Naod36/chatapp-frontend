@@ -15,6 +15,7 @@ export default function ConversationList({
   searchQuery,
   setSearchQuery,
   conversations,
+  isBlockedBy,
   isConvPinned,
   activeConv,
   handleSelectConversation,
@@ -930,6 +931,8 @@ export default function ConversationList({
                     c.id === "virtual-saved-messages" ||
                     (c.type === "direct" && !c.other_participant);
                   const isGroup = c.type === "group";
+                  const blockedBy = !isGroup && !isSaved && isBlockedBy?.(c.other_participant?.user_id || c.other_participant?.id);
+                  const visibleName = blockedBy ? "Person Not Available" : (isSaved ? "Saved Messages" : c.display_name);
                   const isOnline =
                     !isGroup &&
                     !isSaved &&
@@ -985,6 +988,8 @@ export default function ConversationList({
                           >
                             <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
                           </svg>
+                        ) : blockedBy ? (
+                          <span style={{ fontSize: 16 }}>P</span>
                         ) : c.avatar_url ? (
                           <img
                             src={getAssetUrl(c.avatar_url)}
@@ -1044,7 +1049,7 @@ export default function ConversationList({
                                 textOverflow: "ellipsis",
                               }}
                             >
-                              {isSaved ? "Saved Messages" : c.display_name}
+                              {visibleName}
                             </span>
                             {isGroup && (
                               <span
