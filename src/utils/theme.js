@@ -72,6 +72,10 @@ export const formatLastSeen = (timestamp) => {
 };
 
 export const renderMessageStatus = (status, isSidebar = false) => {
+  if (status === null) return null;
+  if (status === "failed") {
+    return React.createElement("span", { role: "status", title: "Message failed to send", style: { color: "#dc2626", marginLeft: 4, fontSize: 11 } }, "Failed to send");
+  }
   const strokeColor =
     status === "read"
       ? "#6366f1"

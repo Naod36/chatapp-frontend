@@ -12,6 +12,12 @@ import {
 export default function ChatArea({
   activeConv,
   blockedByUser = false,
+  blockedUser = false,
+  directReadOnly = false,
+  canSendToConversation,
+  handleBlockUser,
+  handleUnblockUser,
+  showError,
   theme,
   themeTokens: t,
   isInChatSearchOpen,
@@ -62,6 +68,7 @@ export default function ChatArea({
   handleStartEdit,
   handleDeleteMsg,
   handleSendMessage,
+  sendOptimisticMessage,
   replyingTo,
   setReplyingTo,
   editingMessage,
@@ -88,8 +95,6 @@ export default function ChatArea({
   recordingSeconds,
   setRecordingSeconds,
   audioChunksRef,
-  socketRef,
-  setMessages,
   handleFileSelect,
   messageEndRef,
   API_BASE,
@@ -350,23 +355,27 @@ export default function ChatArea({
                   ? t.textMuted
                   : getActiveTypingLabel()
                     ? typingColor
-                  : activeConv.other_participant?.status === "online" ||
-                      activeConv.status === "online"
-                    ? "#34A853"
-                    : t.textMuted,
+                    : activeConv.other_participant?.status === "online" ||
+                        activeConv.status === "online"
+                      ? "#34A853"
+                      : t.textMuted,
                 height: 14,
                 display: "block",
               }}
             >
-              {blockedByUser ? "Person Not Available" : getActiveTypingLabel() ||
-                (activeConv.type === "group"
-                  ? `${activeConv.participants?.length || 0} members`
-                  : !activeConv.other_participant
-                    ? "personal cloud storage"
-                    : activeConv.other_participant.status === "online" ||
-                        activeConv.status === "online"
-                      ? "online"
-                      : formatLastSeen(activeConv.other_participant.last_seen))}
+              {blockedByUser
+                ? "Person Not Available"
+                : getActiveTypingLabel() ||
+                  (activeConv.type === "group"
+                    ? `${activeConv.participants?.length || 0} members`
+                    : !activeConv.other_participant
+                      ? "personal cloud storage"
+                      : activeConv.other_participant.status === "online" ||
+                          activeConv.status === "online"
+                        ? "online"
+                        : formatLastSeen(
+                            activeConv.other_participant.last_seen,
+                          ))}
             </span>
           </div>
         )}
@@ -487,6 +496,24 @@ export default function ChatArea({
                   backdropFilter: "blur(12px)",
                 }}
               >
+                {activeConv.type === "direct" && activeConv.other_participant && (blockedUser || !blockedByUser) && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        const userId = activeConv.other_participant.user_id || activeConv.other_participant.id;
+                        if (blockedUser) await handleUnblockUser(userId);
+                        else await handleBlockUser(userId);
+                        setIsHeaderMenuOpen(false);
+                      } catch (error) {
+                        showError(error.message || "Failed to update block state.");
+                      }
+                    }}
+                    style={{ width: "100%", padding: "8px 12px", background: "none", border: "none", color: "#ef4444", fontSize: 13, borderRadius: 8, cursor: "pointer", textAlign: "left" }}
+                  >
+                    {blockedUser ? "Unblock User" : "Block User"}
+                  </button>
+                )}
                 {activeConv.type === "group" && (
                   <button
                     type="button"
@@ -681,6 +708,7 @@ export default function ChatArea({
               </div>
             </div>
             <button
+              disabled={directReadOnly}
               onClick={(e) => {
                 e.stopPropagation();
                 if (handleUnpin) {
@@ -1068,6 +1096,7 @@ export default function ChatArea({
                         <button
                           key={emoji}
                           type="button"
+                          disabled={directReadOnly}
                           onClick={(e) => {
                             e.stopPropagation();
                             handleToggleReaction(m, emoji);
@@ -1182,7 +1211,7 @@ export default function ChatArea({
                       (edited)
                     </span>
                   )}
-                  {isSelf && renderMessageStatus(m.status, false)}
+                  {isSelf && !blockedByUser && renderMessageStatus(m.status, false)}
                 </span>
               </div>
             </div>
@@ -1229,7 +1258,7 @@ export default function ChatArea({
       )}
 
       {/* Right-Click Message Context Menu */}
-      {contextMenu && (
+      {contextMenu && !directReadOnly && (
         <div
           style={{
             position: "fixed",
@@ -1463,462 +1492,182 @@ export default function ChatArea({
       )}
 
       {/* Floating Rounded Input Card */}
-      {blockedByUser ? (
-        <div className="ht-chat-input-form" style={{ justifyContent: "center", color: t.textMuted, fontWeight: 600 }}>
-          You can't message this user
+      {directReadOnly ? (
+        <div
+          className="ht-chat-input-form"
+          style={{
+            justifyContent: "center",
+            color: t.textMuted,
+            fontWeight: 600,
+          }}
+        >
+          {blockedUser ? "Unblock this user to send messages" : "You can't message this user"}
         </div>
       ) : (
-      <form className="ht-chat-input-form" onSubmit={handleSendMessage}>
-        {getActiveTypingLabel() && (
-          <div
-            aria-label="Contact is typing"
-            style={{
-              height: 18,
-              display: "flex",
-              alignItems: "center",
-              gap: 4,
-              padding: "0 18px 6px",
-            }}
-          >
-            <span
+        <form className="ht-chat-input-form" onSubmit={handleSendMessage}>
+          {getActiveTypingLabel() && (
+            <div
+              aria-label="Contact is typing"
               style={{
-                width: 6,
-                height: 6,
-                borderRadius: "50%",
-                background: typingColor,
-                animation: "typingBounce 1.4s infinite ease-in-out both",
-                animationDelay: "0s",
-              }}
-            />
-            <span
-              style={{
-                width: 6,
-                height: 6,
-                borderRadius: "50%",
-                background: typingColor,
-                animation: "typingBounce 1.4s infinite ease-in-out both",
-                animationDelay: "0.2s",
-              }}
-            />
-            <span
-              style={{
-                width: 6,
-                height: 6,
-                borderRadius: "50%",
-                background: typingColor,
-                animation: "typingBounce 1.4s infinite ease-in-out both",
-                animationDelay: "0.4s",
-              }}
-            />
-          </div>
-        )}
-        {replyingTo && (
-          <div
-            style={{
-              padding: "8px 14px",
-              marginBottom: 8,
-              background: "rgba(56, 189, 248, 0.12)",
-              borderLeft: `4px solid ${t.accent}`,
-              borderRadius: "10px",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              fontSize: "12px",
-            }}
-          >
-            <div>
-              <span style={{ fontWeight: 700, color: t.accent }}>
-                Replying to {replyingTo.senderName}:{" "}
-              </span>
-              <span style={{ color: t.text, opacity: 0.85 }}>
-                {replyingTo.content}
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={() => setReplyingTo(null)}
-              style={{
-                background: "none",
-                border: "none",
-                color: t.textMuted,
-                cursor: "pointer",
-                fontSize: "14px",
-                fontWeight: "bold",
-              }}
-            >
-              ✕
-            </button>
-          </div>
-        )}
-
-        {editingMessage && (
-          <div
-            style={{
-              padding: "8px 14px",
-              marginBottom: 8,
-              background: "rgba(234, 179, 8, 0.12)",
-              borderLeft: "4px solid #eab308",
-              borderRadius: "10px",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              fontSize: "12px",
-            }}
-          >
-            <div>
-              <span style={{ fontWeight: 700, color: "#eab308" }}>
-                Editing message
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                setEditingMessage(null);
-                setMessageText("");
-              }}
-              style={{
-                background: "none",
-                border: "none",
-                color: t.textMuted,
-                cursor: "pointer",
-                fontSize: "14px",
-                fontWeight: "bold",
-              }}
-            >
-              ✕
-            </button>
-          </div>
-        )}
-
-        {selectedFile && (
-          <div
-            style={{
-              background: t.cardBg,
-              border: t.border,
-              borderRadius: 14,
-              padding: "8px 12px",
-              marginBottom: 8,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 12,
-              boxShadow: "0 4px 12px rgba(0,0,0,0.05)",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              {filePreview ? (
-                <img
-                  src={filePreview}
-                  alt="Preview"
-                  style={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: 8,
-                    objectFit: "cover",
-                  }}
-                />
-              ) : (
-                <div
-                  style={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: 8,
-                    background: "rgba(120, 120, 120, 0.1)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <svg
-                    width="18"
-                    height="18"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.5"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                    />
-                  </svg>
-                </div>
-              )}
-              <div style={{ minWidth: 0 }}>
-                <div
-                  style={{
-                    fontSize: 12,
-                    fontWeight: "700",
-                    textOverflow: "ellipsis",
-                    overflow: "hidden",
-                    whiteSpace: "nowrap",
-                    maxWidth: "200px",
-                    color: t.text,
-                  }}
-                >
-                  {selectedFile.name}
-                </div>
-                <div style={{ fontSize: 10, color: t.textMuted }}>
-                  {(selectedFile.size / 1024).toFixed(1)} KB
-                </div>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={cancelAttachment}
-              style={{
-                background: "rgba(120, 120, 120, 0.1)",
-                border: "none",
-                borderRadius: "50%",
-                width: 24,
-                height: 24,
+                height: 18,
                 display: "flex",
                 alignItems: "center",
-                justifyContent: "center",
-                cursor: "pointer",
-                color: t.text,
+                gap: 4,
+                padding: "0 18px 6px",
               }}
             >
-              <svg
-                width="12"
-                height="12"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.5"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M6 18L18 6M6 6l12 12"
-                />
-              </svg>
-            </button>
-          </div>
-        )}
-
-        {isUploading && (
-          <div
-            style={{
-              padding: "6px 12px 10px",
-              width: "100%",
-              boxSizing: "border-box",
-            }}
-          >
+              <span
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: "50%",
+                  background: typingColor,
+                  animation: "typingBounce 1.4s infinite ease-in-out both",
+                  animationDelay: "0s",
+                }}
+              />
+              <span
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: "50%",
+                  background: typingColor,
+                  animation: "typingBounce 1.4s infinite ease-in-out both",
+                  animationDelay: "0.2s",
+                }}
+              />
+              <span
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: "50%",
+                  background: typingColor,
+                  animation: "typingBounce 1.4s infinite ease-in-out both",
+                  animationDelay: "0.4s",
+                }}
+              />
+            </div>
+          )}
+          {replyingTo && (
             <div
               style={{
+                padding: "8px 14px",
+                marginBottom: 8,
+                background: "rgba(56, 189, 248, 0.12)",
+                borderLeft: `4px solid ${t.accent}`,
+                borderRadius: "10px",
                 display: "flex",
-                justifyContent: "space-between",
                 alignItems: "center",
-                fontSize: 11,
-                fontWeight: 600,
-                color: t.textMuted,
-                marginBottom: 4,
+                justifyContent: "space-between",
+                fontSize: "12px",
               }}
             >
-              <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span
-                  className="flowchat-beacon-dot"
-                  style={{ width: 6, height: 6, margin: 0 }}
-                ></span>
-                Uploading attachment...
-              </span>
-              <span style={{ fontSize: 11, fontWeight: 700, color: "#38bdf8" }}>
-                {uploadProgress.loadedFormatted} /{" "}
-                {uploadProgress.totalFormatted} • {uploadProgress.percentage}%
-              </span>
-            </div>
-            <div className="ht-upload-progress-container">
-              <div
-                className="ht-upload-progress-bar-real"
-                style={{ width: `${uploadProgress.percentage}%` }}
-              ></div>
-            </div>
-          </div>
-        )}
-
-        <div
-          className="ht-chat-input-card"
-          style={{ background: t.cardBg, border: t.border }}
-        >
-          <svg
-            width="18"
-            height="18"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.5"
-            viewBox="0 0 24 24"
-            style={{ cursor: "pointer", opacity: 0.65, marginBottom: "8px" }}
-            title="Attach File"
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M15.172 7l-6.586 6.586a2 2 0 11-2.828-2.828l6.414-6.414a4 4 0 015.656 5.656l-6.415 6.415a6 6 0 11-8.486-8.486L10.5 5"
-            />
-          </svg>
-
-          <textarea
-            ref={inputTextareaRef}
-            rows={1}
-            placeholder={
-              selectedFile ? "Add a caption..." : "Type a message..."
-            }
-            value={messageText}
-            onChange={(e) => {
-              setMessageText(e.target.value);
-              handleKeyPress();
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                if (e.shiftKey) {
-                  return; // Allow Shift + Enter to insert a new line naturally
-                }
-                e.preventDefault();
-                handleSendMessage(e);
-              }
-            }}
-            onPaste={handlePaste}
-            className="ht-chat-input-field"
-            style={{
-              color: t.text,
-              resize: "none",
-              border: "none",
-              outline: "none",
-              background: "transparent",
-              fontFamily: "inherit",
-              fontSize: "14px",
-              maxHeight: "100px",
-              overflowY: "auto",
-              paddingTop: "6px",
-              paddingBottom: "6px",
-            }}
-          />
-
-          <div className="ht-input-actions">
-            <div style={{ position: "relative" }} ref={emojiPickerRef}>
-              <svg
-                width="18"
-                height="18"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                viewBox="0 0 24 24"
+              <div>
+                <span style={{ fontWeight: 700, color: t.accent }}>
+                  Replying to {replyingTo.senderName}:{" "}
+                </span>
+                <span style={{ color: t.text, opacity: 0.85 }}>
+                  {replyingTo.content}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReplyingTo(null)}
                 style={{
+                  background: "none",
+                  border: "none",
+                  color: t.textMuted,
                   cursor: "pointer",
-                  opacity: showEmojiPicker ? 1 : 0.6,
-                  marginRight: 8,
-                  color: showEmojiPicker ? t.accent : "currentColor",
+                  fontSize: "14px",
+                  fontWeight: "bold",
                 }}
-                title="Insert Emoji"
-                onClick={() => setShowEmojiPicker((prev) => !prev)}
               >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                />
-              </svg>
-              {showEmojiPicker && (
-                <div
-                  style={{
-                    position: "absolute",
-                    bottom: "calc(100% + 22px)",
-                    right: 0,
-                    zIndex: 100,
-                    "--epr-bg-color": t.cardBg,
-                    "--epr-category-label-bg-color": t.cardBg,
-                    "--epr-header-padding": "12px",
-                    "--epr-search-input-bg-color":
-                      theme === "dark" ? "#121316" : "#f0f1f3",
-                    "--epr-search-input-bg-color-active":
-                      theme === "dark" ? "#121316" : "#f0f1f3",
-                    "--epr-search-border-color":
-                      theme === "dark"
-                        ? "rgba(255,255,255,0.08)"
-                        : "rgba(0,0,0,0.08)",
-                    "--epr-search-input-text-color": t.text,
-                    "--epr-text-color": t.text,
-                    "--epr-category-label-text-color": t.textMuted,
-                    "--epr-hover-bg-color":
-                      theme === "dark"
-                        ? "rgba(255,255,255,0.07)"
-                        : "rgba(0,0,0,0.05)",
-                    "--epr-focus-bg-color":
-                      theme === "dark"
-                        ? "rgba(255,255,255,0.07)"
-                        : "rgba(0,0,0,0.05)",
-                    "--epr-picker-border-color":
-                      theme === "dark"
-                        ? "rgba(255,255,255,0.06)"
-                        : "rgba(0,0,0,0.06)",
-                    "--epr-active-skin-tone-indicator-border-color": t.accent,
-                    "--epr-skin-tone-picker-menu-overlay-bg-color": t.cardBg,
-                    borderRadius: 16,
-                    overflow: "hidden",
-                    boxShadow:
-                      theme === "dark"
-                        ? "0 8px 40px rgba(0,0,0,0.5)"
-                        : "0 8px 32px rgba(0,0,0,0.16)",
-                    border: t.border,
-                  }}
-                >
-                  <EmojiPicker
-                    theme={theme === "dark" ? "dark" : "light"}
-                    emojiStyle="native"
-                    onEmojiClick={(emojiData) => {
-                      setMessageText((prev) => prev + emojiData.emoji);
-                      setShowEmojiPicker(false);
-                    }}
-                    searchPlaceHolder="Search emoji..."
-                    lazyLoadEmojis
-                    height={340}
-                    width={380}
-                    previewConfig={{ showPreview: false }}
-                  />
-                </div>
-              )}
+                ✕
+              </button>
             </div>
+          )}
 
-            {/* Voice message mic button */}
-            {!messageText.trim() && !selectedFile && (
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                {isRecording && (
-                  <button
-                    type="button"
-                    title="Cancel recording"
-                    onClick={() => {
-                      if (mediaRecorderRef.current?.state === "recording") {
-                        mediaRecorderRef.current.onstop = null;
-                        mediaRecorderRef.current.stop();
-                      }
-                      if (audioStreamRef.current) {
-                        audioStreamRef.current
-                          .getTracks()
-                          .forEach((t) => t.stop());
-                      }
-                      clearInterval(recordingTimerRef.current);
-                      setIsRecording(false);
-                      setRecordingSeconds(0);
-                    }}
+          {editingMessage && (
+            <div
+              style={{
+                padding: "8px 14px",
+                marginBottom: 8,
+                background: "rgba(234, 179, 8, 0.12)",
+                borderLeft: "4px solid #eab308",
+                borderRadius: "10px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                fontSize: "12px",
+              }}
+            >
+              <div>
+                <span style={{ fontWeight: 700, color: "#eab308" }}>
+                  Editing message
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingMessage(null);
+                  setMessageText("");
+                }}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: t.textMuted,
+                  cursor: "pointer",
+                  fontSize: "14px",
+                  fontWeight: "bold",
+                }}
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
+          {selectedFile && (
+            <div
+              style={{
+                background: t.cardBg,
+                border: t.border,
+                borderRadius: 14,
+                padding: "8px 12px",
+                marginBottom: 8,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 12,
+                boxShadow: "0 4px 12px rgba(0,0,0,0.05)",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                {filePreview ? (
+                  <img
+                    src={filePreview}
+                    alt="Preview"
                     style={{
-                      border: "none",
-                      background: "rgba(229, 62, 62, 0.15)",
-                      color: "#e53e3e",
-                      borderRadius: "50%",
-                      width: 32,
-                      height: 32,
-                      cursor: "pointer",
+                      width: 36,
+                      height: 36,
+                      borderRadius: 8,
+                      objectFit: "cover",
+                    }}
+                  />
+                ) : (
+                  <div
+                    style={{
+                      width: 36,
+                      height: 36,
+                      borderRadius: 8,
+                      background: "rgba(120, 120, 120, 0.1)",
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
                     }}
                   >
                     <svg
-                      width="14"
-                      height="14"
+                      width="18"
+                      height="18"
                       fill="none"
                       stroke="currentColor"
                       strokeWidth="2.5"
@@ -1927,194 +1676,49 @@ export default function ChatArea({
                       <path
                         strokeLinecap="round"
                         strokeLinejoin="round"
-                        d="M6 18L18 6M6 6l12 12"
+                        d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
                       />
                     </svg>
-                  </button>
+                  </div>
                 )}
-                <button
-                  type="button"
-                  title={
-                    isRecording
-                      ? "Click to stop & send voice message"
-                      : "Click to record voice message"
-                  }
-                  onClick={async () => {
-                    if (isRecording) {
-                      if (mediaRecorderRef.current?.state === "recording") {
-                        mediaRecorderRef.current.stop();
-                      }
-                      clearInterval(recordingTimerRef.current);
-                      setIsRecording(false);
-                      setRecordingSeconds(0);
-                      return;
-                    }
-
-                    if (!activeConv) return;
-                    try {
-                      const stream = await navigator.mediaDevices.getUserMedia({
-                        audio: true,
-                      });
-                      audioStreamRef.current = stream;
-                      audioChunksRef.current = [];
-                      const mr = new MediaRecorder(stream);
-                      mediaRecorderRef.current = mr;
-
-                      mr.ondataavailable = (e) => {
-                        if (e.data.size > 0)
-                          audioChunksRef.current.push(e.data);
-                      };
-
-                      mr.onstop = async () => {
-                        stream.getTracks().forEach((t) => t.stop());
-                        const blob = new Blob(audioChunksRef.current, {
-                          type: "audio/webm",
-                        });
-                        if (blob.size < 1000) return;
-
-                        setIsUploading(true);
-                        try {
-                          const fd = new FormData();
-                          fd.append("file", blob, `voice_${Date.now()}.webm`);
-                          const token = localStorage.getItem("chat_token");
-                          const res = await fetch(`${API_BASE}/upload`, {
-                            method: "POST",
-                            headers: { Authorization: `Bearer ${token}` },
-                            body: fd,
-                          });
-                          const data = await res.json();
-                          if (data.url && socketRef.current) {
-                            const tempId = `temp-${Date.now()}`;
-                            setMessages((prev) => [
-                              ...prev,
-                              {
-                                id: tempId,
-                                sender_id: user.userId,
-                                content: "Voice message",
-                                message_type: "audio",
-                                media_url: data.url,
-                                created_at: new Date().toISOString(),
-                                status: "pending",
-                              },
-                            ]);
-                            socketRef.current.send(
-                              JSON.stringify({
-                                action: "send_message",
-                                conversation_id: activeConv.id,
-                                content: "Voice message",
-                                message_type: "audio",
-                                media_url: data.url,
-                              }),
-                            );
-                          }
-                        } catch (err) {
-                          console.error("Voice upload failed:", err);
-                        } finally {
-                          setIsUploading(false);
-                        }
-                      };
-
-                      mr.start();
-                      setIsRecording(true);
-                      setRecordingSeconds(0);
-                      recordingTimerRef.current = setInterval(
-                        () => setRecordingSeconds((s) => s + 1),
-                        1000,
-                      );
-                    } catch (err) {
-                      console.error("Mic error:", err);
-                      if (
-                        err.name === "NotFoundError" ||
-                        err.message?.includes("not be found")
-                      ) {
-                        alert(
-                          "No microphone device found on your computer. Please connect a microphone to record voice messages.",
-                        );
-                      } else {
-                        alert(
-                          "Could not access microphone. Please check your browser and system microphone permissions.",
-                        );
-                      }
-                    }
-                  }}
-                  style={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: "50%",
-                    border: "none",
-                    background: isRecording ? "#e53e3e" : t.accent,
-                    color: "white",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    cursor: "pointer",
-                    flexShrink: 0,
-                    transition: "all 0.2s ease",
-                  }}
-                >
-                  {isRecording ? (
-                    <span
-                      style={{
-                        fontSize: 11,
-                        fontWeight: 800,
-                        letterSpacing: "-0.5px",
-                      }}
-                    >
-                      {Math.floor(recordingSeconds / 60)
-                        .toString()
-                        .padStart(2, "0")}
-                      :{(recordingSeconds % 60).toString().padStart(2, "0")}
-                    </span>
-                  ) : (
-                    <svg
-                      width="14"
-                      height="14"
-                      fill="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-                      <path
-                        d="M19 10v2a7 7 0 0 1-14 0v-2"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        fill="none"
-                        strokeLinecap="round"
-                      />
-                      <line
-                        x1="12"
-                        y1="19"
-                        x2="12"
-                        y2="23"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                      />
-                      <line
-                        x1="8"
-                        y1="23"
-                        x2="16"
-                        y2="23"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                      />
-                    </svg>
-                  )}
-                </button>
+                <div style={{ minWidth: 0 }}>
+                  <div
+                    style={{
+                      fontSize: 12,
+                      fontWeight: "700",
+                      textOverflow: "ellipsis",
+                      overflow: "hidden",
+                      whiteSpace: "nowrap",
+                      maxWidth: "200px",
+                      color: t.text,
+                    }}
+                  >
+                    {selectedFile.name}
+                  </div>
+                  <div style={{ fontSize: 10, color: t.textMuted }}>
+                    {(selectedFile.size / 1024).toFixed(1)} KB
+                  </div>
+                </div>
               </div>
-            )}
-
-            {/* Send button */}
-            {(messageText.trim() || selectedFile) && (
               <button
-                className="ht-send-pill"
-                type="submit"
-                style={{ background: t.accent }}
-                disabled={isUploading}
+                type="button"
+                onClick={cancelAttachment}
+                style={{
+                  background: "rgba(120, 120, 120, 0.1)",
+                  border: "none",
+                  borderRadius: "50%",
+                  width: 24,
+                  height: 24,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: "pointer",
+                  color: t.text,
+                }}
               >
                 <svg
-                  width="16"
-                  height="16"
+                  width="12"
+                  height="12"
                   fill="none"
                   stroke="currentColor"
                   strokeWidth="2.5"
@@ -2123,14 +1727,441 @@ export default function ChatArea({
                   <path
                     strokeLinecap="round"
                     strokeLinejoin="round"
-                    d="M14 5l7 7m0 0l-7 7m7-7H3"
+                    d="M6 18L18 6M6 6l12 12"
                   />
                 </svg>
               </button>
-            )}
+            </div>
+          )}
+
+          {isUploading && (
+            <div
+              style={{
+                padding: "6px 12px 10px",
+                width: "100%",
+                boxSizing: "border-box",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  fontSize: 11,
+                  fontWeight: 600,
+                  color: t.textMuted,
+                  marginBottom: 4,
+                }}
+              >
+                <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span
+                    className="flowchat-beacon-dot"
+                    style={{ width: 6, height: 6, margin: 0 }}
+                  ></span>
+                  Uploading attachment...
+                </span>
+                <span
+                  style={{ fontSize: 11, fontWeight: 700, color: "#38bdf8" }}
+                >
+                  {uploadProgress.loadedFormatted} /{" "}
+                  {uploadProgress.totalFormatted} • {uploadProgress.percentage}%
+                </span>
+              </div>
+              <div className="ht-upload-progress-container">
+                <div
+                  className="ht-upload-progress-bar-real"
+                  style={{ width: `${uploadProgress.percentage}%` }}
+                ></div>
+              </div>
+            </div>
+          )}
+
+          <div
+            className="ht-chat-input-card"
+            style={{ background: t.cardBg, border: t.border }}
+          >
+            <svg
+              width="18"
+              height="18"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              viewBox="0 0 24 24"
+              style={{ cursor: "pointer", opacity: 0.65, marginBottom: "8px" }}
+              title="Attach File"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M15.172 7l-6.586 6.586a2 2 0 11-2.828-2.828l6.414-6.414a4 4 0 015.656 5.656l-6.415 6.415a6 6 0 11-8.486-8.486L10.5 5"
+              />
+            </svg>
+
+            <textarea
+              ref={inputTextareaRef}
+              rows={1}
+              placeholder={
+                selectedFile ? "Add a caption..." : "Type a message..."
+              }
+              value={messageText}
+              onChange={(e) => {
+                setMessageText(e.target.value);
+                handleKeyPress();
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  if (e.shiftKey) {
+                    return; // Allow Shift + Enter to insert a new line naturally
+                  }
+                  e.preventDefault();
+                  handleSendMessage(e);
+                }
+              }}
+              onPaste={handlePaste}
+              className="ht-chat-input-field"
+              style={{
+                color: t.text,
+                resize: "none",
+                border: "none",
+                outline: "none",
+                background: "transparent",
+                fontFamily: "inherit",
+                fontSize: "14px",
+                maxHeight: "100px",
+                overflowY: "auto",
+                paddingTop: "6px",
+                paddingBottom: "6px",
+              }}
+            />
+
+            <div className="ht-input-actions">
+              <div style={{ position: "relative" }} ref={emojiPickerRef}>
+                <svg
+                  width="18"
+                  height="18"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  viewBox="0 0 24 24"
+                  style={{
+                    cursor: "pointer",
+                    opacity: showEmojiPicker ? 1 : 0.6,
+                    marginRight: 8,
+                    color: showEmojiPicker ? t.accent : "currentColor",
+                  }}
+                  title="Insert Emoji"
+                  onClick={() => setShowEmojiPicker((prev) => !prev)}
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                  />
+                </svg>
+                {showEmojiPicker && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      bottom: "calc(100% + 22px)",
+                      right: 0,
+                      zIndex: 100,
+                      "--epr-bg-color": t.cardBg,
+                      "--epr-category-label-bg-color": t.cardBg,
+                      "--epr-header-padding": "12px",
+                      "--epr-search-input-bg-color":
+                        theme === "dark" ? "#121316" : "#f0f1f3",
+                      "--epr-search-input-bg-color-active":
+                        theme === "dark" ? "#121316" : "#f0f1f3",
+                      "--epr-search-border-color":
+                        theme === "dark"
+                          ? "rgba(255,255,255,0.08)"
+                          : "rgba(0,0,0,0.08)",
+                      "--epr-search-input-text-color": t.text,
+                      "--epr-text-color": t.text,
+                      "--epr-category-label-text-color": t.textMuted,
+                      "--epr-hover-bg-color":
+                        theme === "dark"
+                          ? "rgba(255,255,255,0.07)"
+                          : "rgba(0,0,0,0.05)",
+                      "--epr-focus-bg-color":
+                        theme === "dark"
+                          ? "rgba(255,255,255,0.07)"
+                          : "rgba(0,0,0,0.05)",
+                      "--epr-picker-border-color":
+                        theme === "dark"
+                          ? "rgba(255,255,255,0.06)"
+                          : "rgba(0,0,0,0.06)",
+                      "--epr-active-skin-tone-indicator-border-color": t.accent,
+                      "--epr-skin-tone-picker-menu-overlay-bg-color": t.cardBg,
+                      borderRadius: 16,
+                      overflow: "hidden",
+                      boxShadow:
+                        theme === "dark"
+                          ? "0 8px 40px rgba(0,0,0,0.5)"
+                          : "0 8px 32px rgba(0,0,0,0.16)",
+                      border: t.border,
+                    }}
+                  >
+                    <EmojiPicker
+                      theme={theme === "dark" ? "dark" : "light"}
+                      emojiStyle="native"
+                      onEmojiClick={(emojiData) => {
+                        setMessageText((prev) => prev + emojiData.emoji);
+                        setShowEmojiPicker(false);
+                      }}
+                      searchPlaceHolder="Search emoji..."
+                      lazyLoadEmojis
+                      height={340}
+                      width={380}
+                      previewConfig={{ showPreview: false }}
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Voice message mic button */}
+              {!messageText.trim() && !selectedFile && (
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  {isRecording && (
+                    <button
+                      type="button"
+                      title="Cancel recording"
+                      onClick={() => {
+                        if (mediaRecorderRef.current?.state === "recording") {
+                          mediaRecorderRef.current.onstop = null;
+                          mediaRecorderRef.current.stop();
+                        }
+                        if (audioStreamRef.current) {
+                          audioStreamRef.current
+                            .getTracks()
+                            .forEach((t) => t.stop());
+                        }
+                        clearInterval(recordingTimerRef.current);
+                        setIsRecording(false);
+                        setRecordingSeconds(0);
+                      }}
+                      style={{
+                        border: "none",
+                        background: "rgba(229, 62, 62, 0.15)",
+                        color: "#e53e3e",
+                        borderRadius: "50%",
+                        width: 32,
+                        height: 32,
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
+                    >
+                      <svg
+                        width="14"
+                        height="14"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.5"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          d="M6 18L18 6M6 6l12 12"
+                        />
+                      </svg>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    title={
+                      isRecording
+                        ? "Click to stop & send voice message"
+                        : "Click to record voice message"
+                    }
+                    onClick={async () => {
+                      if (!canSendToConversation(activeConv)) return;
+                      if (isRecording) {
+                        if (mediaRecorderRef.current?.state === "recording") {
+                          mediaRecorderRef.current.stop();
+                        }
+                        clearInterval(recordingTimerRef.current);
+                        setIsRecording(false);
+                        setRecordingSeconds(0);
+                        return;
+                      }
+
+                      if (!activeConv) return;
+                      try {
+                        const stream =
+                          await navigator.mediaDevices.getUserMedia({
+                            audio: true,
+                          });
+                        if (!canSendToConversation(activeConv)) {
+                          stream.getTracks().forEach((track) => track.stop());
+                          return;
+                        }
+                        audioStreamRef.current = stream;
+                        audioChunksRef.current = [];
+                        const mr = new MediaRecorder(stream);
+                        mediaRecorderRef.current = mr;
+
+                        mr.ondataavailable = (e) => {
+                          if (e.data.size > 0)
+                            audioChunksRef.current.push(e.data);
+                        };
+
+                        mr.onstop = async () => {
+                          stream.getTracks().forEach((t) => t.stop());
+                          if (!canSendToConversation(activeConv)) return;
+                          const blob = new Blob(audioChunksRef.current, {
+                            type: "audio/webm",
+                          });
+                          if (blob.size < 1000) return;
+
+                          setIsUploading(true);
+                          try {
+                            const fd = new FormData();
+                            fd.append("file", blob, `voice_${Date.now()}.webm`);
+                            const token = localStorage.getItem("chat_token");
+                            const res = await fetch(`${API_BASE}/upload`, {
+                              method: "POST",
+                              headers: { Authorization: `Bearer ${token}` },
+                              body: fd,
+                            });
+                            if (!res.ok) throw new Error("Voice upload failed");
+                            const data = await res.json();
+                            if (data.url && canSendToConversation(activeConv)) {
+                              await sendOptimisticMessage(activeConv, {
+                                content: "Voice message",
+                                message_type: "audio",
+                                media_url: data.url,
+                                reply_to_id: replyingTo?.id || null,
+                              });
+                            }
+                          } catch (err) {
+                            console.error("Voice upload failed:", err);
+                            showError?.(err.message || "Failed to send voice message.");
+                          } finally {
+                            setIsUploading(false);
+                          }
+                        };
+
+                        mr.start();
+                        setIsRecording(true);
+                        setRecordingSeconds(0);
+                        recordingTimerRef.current = setInterval(
+                          () => setRecordingSeconds((s) => s + 1),
+                          1000,
+                        );
+                      } catch (err) {
+                        console.error("Mic error:", err);
+                        if (
+                          err.name === "NotFoundError" ||
+                          err.message?.includes("not be found")
+                        ) {
+                          alert(
+                            "No microphone device found on your computer. Please connect a microphone to record voice messages.",
+                          );
+                        } else {
+                          alert(
+                            "Could not access microphone. Please check your browser and system microphone permissions.",
+                          );
+                        }
+                      }
+                    }}
+                    style={{
+                      width: 36,
+                      height: 36,
+                      borderRadius: "50%",
+                      border: "none",
+                      background: isRecording ? "#e53e3e" : t.accent,
+                      color: "white",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      cursor: "pointer",
+                      flexShrink: 0,
+                      transition: "all 0.2s ease",
+                    }}
+                  >
+                    {isRecording ? (
+                      <span
+                        style={{
+                          fontSize: 11,
+                          fontWeight: 800,
+                          letterSpacing: "-0.5px",
+                        }}
+                      >
+                        {Math.floor(recordingSeconds / 60)
+                          .toString()
+                          .padStart(2, "0")}
+                        :{(recordingSeconds % 60).toString().padStart(2, "0")}
+                      </span>
+                    ) : (
+                      <svg
+                        width="14"
+                        height="14"
+                        fill="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                        <path
+                          d="M19 10v2a7 7 0 0 1-14 0v-2"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          fill="none"
+                          strokeLinecap="round"
+                        />
+                        <line
+                          x1="12"
+                          y1="19"
+                          x2="12"
+                          y2="23"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                        />
+                        <line
+                          x1="8"
+                          y1="23"
+                          x2="16"
+                          y2="23"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                        />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+              )}
+
+              {/* Send button */}
+              {(messageText.trim() || selectedFile) && (
+                <button
+                  className="ht-send-pill"
+                  type="submit"
+                  style={{ background: t.accent }}
+                  disabled={isUploading}
+                >
+                  <svg
+                    width="16"
+                    height="16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M14 5l7 7m0 0l-7 7m7-7H3"
+                    />
+                  </svg>
+                </button>
+              )}
+            </div>
           </div>
-        </div>
-      </form>
+        </form>
       )}
       <input
         type="file"

@@ -129,11 +129,11 @@ export default function ConversationInspector({
             <div style={{ fontSize: 16, fontWeight: "800", color: t.text }}>
               {activeConv.display_name}
             </div>
-            <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>
+            {!activeConv.identity_hidden && <div style={{ fontSize: 12, color: t.textMuted, marginTop: 4 }}>
               {activeConv.other_participant
                 ? `@${activeConv.other_participant.username}`
                 : "Personal Cloud"}
-            </div>
+              </div>}
 
             {activeConv.other_participant?.bio && (
               <div
@@ -164,7 +164,7 @@ export default function ConversationInspector({
               style={{ color: t.text }}
               onClick={() => {
                 setViewingParticipantProfile({
-                  user_id: activeConv.other_participant?.user_id,
+                  user_id: activeConv.other_participant?.user_id || activeConv.other_participant?.id,
                   display_name: activeConv.display_name,
                   username:
                     activeConv.other_participant?.username ||

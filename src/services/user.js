@@ -6,35 +6,35 @@ import { apiFetch } from "./api";
  * Handles current user info retrieval, profile edits, and public searches.
  */
 export const userService = {
-    async getProfile() {
-        return apiFetch("/me");
-    },
+  async getProfile() {
+    return apiFetch("/me");
+  },
 
-    async updateProfile(profileData) {
-        // profileData: { display_name, bio, avatar_url, status, is_public }
-        return apiFetch("/users/profile", {
-            method: "PUT",
-            body: JSON.stringify(profileData),
-        });
-    },
+  async updateProfile(profileData) {
+    // profileData: { display_name, bio, avatar_url, status, is_public }
+    return apiFetch("/users/profile", {
+      method: "PUT",
+      body: JSON.stringify(profileData),
+    });
+  },
 
-    async searchUsers(query) {
-        return apiFetch(`/users/search?query=${encodeURIComponent(query)}`);
-    },
+  async searchUsers(query) {
+    return apiFetch(`/users/search?query=${encodeURIComponent(query)}`);
+  },
 
-    async getBlockedUsers() {
-        return apiFetch("/users/blocked");
-    },
+  async getBlockedUsers() {
+    return apiFetch("/users/blocked");
+  },
 
-    async getBlockedByUsers() {
-        return apiFetch("/users/blocked-by");
-    },
+  async getBlockedByUsers() {
+    return apiFetch("/users/blocked-by");
+  },
 
-    async blockUser(userId) {
-        return apiFetch(`/users/block/${userId}`, { method: "POST" });
-    },
+  async blockUser(userId) {
+    return apiFetch(`/users/block/${userId}`, { method: "POST" });
+  },
 
-    async unblockUser(userId) {
-        return apiFetch(`/users/block/${userId}`, { method: "DELETE" });
-    }
+  async unblockUser(userId) {
+    return apiFetch(`/users/block/${userId}`, { method: "DELETE" });
+  },
 };

@@ -94,7 +94,7 @@ export default function UserProfileModal({
               pointerEvents: "none",
             }}
           />
-          {viewingParticipantProfile.status === "online" && (
+          {!viewingParticipantProfile.identity_hidden && viewingParticipantProfile.status === "online" && (
             <div
               style={{
                 position: "absolute",
@@ -121,9 +121,9 @@ export default function UserProfileModal({
           {viewingParticipantProfile.display_name ||
             viewingParticipantProfile.username}
         </h3>
-        <div style={{ fontSize: 13, color: t.textMuted, marginBottom: 14 }}>
+        {!viewingParticipantProfile.identity_hidden && <div style={{ fontSize: 13, color: t.textMuted, marginBottom: 14 }}>
           @{viewingParticipantProfile.username}
-        </div>
+        </div>}
 
         {/* Bio / About Section */}
         <div
@@ -162,7 +162,7 @@ export default function UserProfileModal({
           </div>
         </div>
 
-        {viewingParticipantProfile.user_id &&
+        {!viewingParticipantProfile.identity_hidden && viewingParticipantProfile.user_id &&
           viewingParticipantProfile.user_id !== user.userId && (
             <button
               type="button"

@@ -931,8 +931,17 @@ export default function ConversationList({
                     c.id === "virtual-saved-messages" ||
                     (c.type === "direct" && !c.other_participant);
                   const isGroup = c.type === "group";
-                  const blockedBy = !isGroup && !isSaved && isBlockedBy?.(c.other_participant?.user_id || c.other_participant?.id);
-                  const visibleName = blockedBy ? "Person Not Available" : (isSaved ? "Saved Messages" : c.display_name);
+                  const blockedBy =
+                    !isGroup &&
+                    !isSaved &&
+                    isBlockedBy?.(
+                      c.other_participant?.user_id || c.other_participant?.id,
+                    );
+                  const visibleName = blockedBy
+                    ? "Person Not Available"
+                    : isSaved
+                      ? "Saved Messages"
+                      : c.display_name;
                   const isOnline =
                     !isGroup &&
                     !isSaved &&
