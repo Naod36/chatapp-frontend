@@ -20,5 +20,21 @@ export const userService = {
 
     async searchUsers(query) {
         return apiFetch(`/users/search?query=${encodeURIComponent(query)}`);
+    },
+
+    async getBlockedUsers() {
+        return apiFetch("/users/blocked");
+    },
+
+    async getBlockedByUsers() {
+        return apiFetch("/users/blocked-by");
+    },
+
+    async blockUser(userId) {
+        return apiFetch(`/users/block/${userId}`, { method: "POST" });
+    },
+
+    async unblockUser(userId) {
+        return apiFetch(`/users/block/${userId}`, { method: "DELETE" });
     }
 };

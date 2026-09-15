@@ -8,6 +8,10 @@ export default function ParticipantContextMenu({
     groupAdminsMap,
     handleMakeAdmin,
     setViewingParticipantProfile,
+    isBlocked,
+    isBlockedBy,
+    handleBlockUser,
+    handleUnblockUser,
     theme,
     themeTokens: t
 }) {
@@ -17,6 +21,8 @@ export default function ParticipantContextMenu({
     const isMe = pId === user.userId;
     const isCreator = pId === activeConv?.creator_id;
     const currentlyAdmin = participantContextMenu.participant.role === "admin" || (groupAdminsMap[activeConv?.id] || []).includes(pId);
+    const blocked = isBlocked?.(pId);
+    const blockedBy = isBlockedBy?.(pId);
 
     return (
         <div
@@ -71,6 +77,38 @@ export default function ParticipantContextMenu({
                 >
                     <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
                     Direct Message
+                </button>
+            )}
+
+            {!isMe && !blockedBy && (
+                <button
+                    type="button"
+                    onClick={async () => {
+                        try {
+                            if (blocked) await handleUnblockUser(pId);
+                            else await handleBlockUser(pId);
+                            setParticipantContextMenu(null);
+                        } catch (error) {
+                            console.error("Failed to update block state:", error);
+                        }
+                    }}
+                    style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        width: "100%",
+                        padding: "8px 10px",
+                        background: "none",
+                        border: "none",
+                        color: "#ef4444",
+                        fontSize: 12,
+                        fontWeight: 700,
+                        borderRadius: 8,
+                        cursor: "pointer",
+                        textAlign: "left"
+                    }}
+                >
+                    {blocked ? "Unblock User" : "Block User"}
                 </button>
             )}
 

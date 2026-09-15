@@ -32,6 +32,23 @@ export const conversationService = {
         return apiFetch(`/conversations/${conversationId}/messages`);
     },
 
+    async getPinnedMessages(conversationId) {
+        return apiFetch(`/conversations/${conversationId}/pins`);
+    },
+
+    async pinMessage(conversationId, messageId, scope = "personal") {
+        return apiFetch(`/conversations/${conversationId}/pin`, {
+            method: "POST",
+            body: JSON.stringify({ message_id: messageId, scope }),
+        });
+    },
+
+    async unpinMessage(conversationId, messageId) {
+        return apiFetch(`/conversations/${conversationId}/pin/${messageId}`, {
+            method: "DELETE",
+        });
+    },
+
     async uploadFile(file, onProgress) {
         if (onProgress) {
             return uploadFileWithProgress(file, onProgress);
@@ -48,6 +65,23 @@ export const conversationService = {
         return apiFetch(`/conversations/${conversationId}`, {
             method: "PUT",
             body: JSON.stringify(data)
+        });
+    },
+
+    async getPinnedMessages(conversationId) {
+        return apiFetch(`/conversations/${conversationId}/pins`);
+    },
+
+    async pinMessage(conversationId, messageId, scope = "personal") {
+        return apiFetch(`/conversations/${conversationId}/pin`, {
+            method: "POST",
+            body: JSON.stringify({ message_id: messageId, scope }),
+        });
+    },
+
+    async unpinMessage(conversationId, messageId) {
+        return apiFetch(`/conversations/${conversationId}/pin/${messageId}`, {
+            method: "DELETE",
         });
     }
 };

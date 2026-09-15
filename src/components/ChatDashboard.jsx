@@ -172,6 +172,34 @@ export default function ChatDashboard({ user, onLogout }) {
     });
     const [isHeaderMenuOpen, setIsHeaderMenuOpen] = useState(false);
     const headerMenuRef = useRef(null);
+    const [blockedUserIds, setBlockedUserIds] = useState([]);
+    const [blockedByUserIds, setBlockedByUserIds] = useState([]);
+
+    const isBlocked = (userId) => blockedUserIds.includes(String(userId));
+    const isBlockedBy = (userId) => blockedByUserIds.includes(String(userId));
+
+    const refreshBlockState = async () => {
+        try {
+            const [blocked, blockedBy] = await Promise.all([
+                userService.getBlockedUsers(),
+                userService.getBlockedByUsers(),
+            ]);
+            setBlockedUserIds((blocked || []).map((item) => String(item.user_id)));
+            setBlockedByUserIds((blockedBy || []).map(String));
+        } catch (err) {
+            console.error("Failed to load block state:", err);
+        }
+    };
+
+    const handleBlockUser = async (userId) => {
+        await userService.blockUser(userId);
+        setBlockedUserIds((prev) => prev.includes(String(userId)) ? prev : [...prev, String(userId)]);
+    };
+
+    const handleUnblockUser = async (userId) => {
+        await userService.unblockUser(userId);
+        setBlockedUserIds((prev) => prev.filter((id) => id !== String(userId)));
+    };
 
     useEffect(() => {
         const handleClickOutside = (event) => {
@@ -951,6 +979,7 @@ export default function ChatDashboard({ user, onLogout }) {
             }
         };
         fetchMyProfile();
+        refreshBlockState();
 
         if ("Notification" in window && Notification.permission === "default") {
             Notification.requestPermission().catch(() => { });
@@ -1390,7 +1419,7 @@ export default function ChatDashboard({ user, onLogout }) {
 
             // Fetch pinned messages stack
             try {
-                const pins = await fetchWithAuth(`/conversations/${conv.id}/pins`);
+                const pins = await conversationService.getPinnedMessages(conv.id);
                 if (Array.isArray(pins)) {
                     setPinnedMessagesMap(prev => ({ ...prev, [conv.id]: pins }));
                 }
@@ -1572,6 +1601,14 @@ export default function ChatDashboard({ user, onLogout }) {
         const hasText = messageText.trim().length > 0;
         if (!selectedFile && !hasText) return;
         if (!activeConv || !socketRef.current) return;
+
+        const directOtherId = activeConv.type === "direct"
+            ? activeConv.other_participant?.user_id || activeConv.other_participant?.id
+            : null;
+        if (directOtherId && isBlocked(directOtherId)) {
+            showError("You can't message this user while they are blocked.");
+            return;
+        }
 
         // If editing an existing message
         if (editingMessage) {
@@ -2340,6 +2377,10 @@ export default function ChatDashboard({ user, onLogout }) {
                 groupAdminsMap={groupAdminsMap}
                 handleMakeAdmin={handleMakeAdmin}
                 setViewingParticipantProfile={setViewingParticipantProfile}
+                isBlocked={isBlocked}
+                isBlockedBy={isBlockedBy}
+                handleBlockUser={handleBlockUser}
+                handleUnblockUser={handleUnblockUser}
                 theme={theme}
                 themeTokens={t}
             />
