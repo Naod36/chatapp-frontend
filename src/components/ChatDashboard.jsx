@@ -2089,6 +2089,7 @@ export default function ChatDashboard({ user, onLogout }) {
                 isBlockedBy={isBlockedBy}
                 isConvPinned={isConvPinned}
                 activeConv={activeConvForDisplay}
+                blockedByUser={Boolean(activeConv && activeConv.type === "direct" && isBlockedBy(activeConv.other_participant?.user_id || activeConv.other_participant?.id))}
                 handleSelectConversation={handleSelectConversation}
                 user={user}
                 convoTab={convoTab}

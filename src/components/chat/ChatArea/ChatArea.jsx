@@ -11,6 +11,7 @@ import {
 
 export default function ChatArea({
   activeConv,
+  blockedByUser = false,
   theme,
   themeTokens: t,
   isInChatSearchOpen,
@@ -345,8 +346,10 @@ export default function ChatArea({
             <span
               style={{
                 fontSize: 11,
-                color: getActiveTypingLabel()
-                  ? typingColor
+                color: blockedByUser
+                  ? t.textMuted
+                  : getActiveTypingLabel()
+                    ? typingColor
                   : activeConv.other_participant?.status === "online" ||
                       activeConv.status === "online"
                     ? "#34A853"
@@ -355,7 +358,7 @@ export default function ChatArea({
                 display: "block",
               }}
             >
-              {getActiveTypingLabel() ||
+              {blockedByUser ? "Person Not Available" : getActiveTypingLabel() ||
                 (activeConv.type === "group"
                   ? `${activeConv.participants?.length || 0} members`
                   : !activeConv.other_participant
@@ -1460,6 +1463,11 @@ export default function ChatArea({
       )}
 
       {/* Floating Rounded Input Card */}
+      {blockedByUser ? (
+        <div className="ht-chat-input-form" style={{ justifyContent: "center", color: t.textMuted, fontWeight: 600 }}>
+          You can't message this user
+        </div>
+      ) : (
       <form className="ht-chat-input-form" onSubmit={handleSendMessage}>
         {getActiveTypingLabel() && (
           <div
@@ -2123,6 +2131,7 @@ export default function ChatArea({
           </div>
         </div>
       </form>
+      )}
       <input
         type="file"
         ref={fileInputRef}
