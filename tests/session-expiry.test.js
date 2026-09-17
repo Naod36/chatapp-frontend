@@ -5,7 +5,9 @@ import { fileURLToPath } from "node:url";
 
 test("authenticated requests expire only their own rejected session", async () => {
   const keys = ["window", "localStorage", "fetch", "XMLHttpRequest"];
-  const descriptors = new Map(keys.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  const descriptors = new Map(
+    keys.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]),
+  );
   const storage = new Map();
   globalThis.localStorage = {
     getItem: (key) => storage.get(key) ?? null,
@@ -20,8 +22,12 @@ test("authenticated requests expire only their own rejected session", async () =
     optimizeDeps: { noDiscovery: true, include: [] },
   });
   try {
-    const { apiFetch, uploadFileWithProgress } = await server.ssrLoadModule("/src/services/api.js");
-    const { SESSION_EXPIRED_EVENT } = await server.ssrLoadModule("/src/services/session.js");
+    const { apiFetch, uploadFileWithProgress } = await server.ssrLoadModule(
+      "/src/services/api.js",
+    );
+    const { SESSION_EXPIRED_EVENT } = await server.ssrLoadModule(
+      "/src/services/session.js",
+    );
     let expirations = 0;
     window.addEventListener(SESSION_EXPIRED_EVENT, () => expirations++);
     const seed = (token) => {
@@ -29,7 +35,11 @@ test("authenticated requests expire only their own rejected session", async () =
       localStorage.setItem("chat_userId", "me");
       localStorage.setItem("chat_username", "tester");
     };
-    const response = (status) => new Response("{}", { status, headers: { "content-type": "application/json" } });
+    const response = (status) =>
+      new Response("{}", {
+        status,
+        headers: { "content-type": "application/json" },
+      });
 
     seed("expired");
     globalThis.fetch = async () => response(401);
@@ -37,7 +47,11 @@ test("authenticated requests expire only their own rejected session", async () =
     assert.equal(storage.size, 0);
     assert.equal(expirations, 1);
     await assert.rejects(apiFetch("/me"));
-    assert.equal(expirations, 1, "unauthenticated 401 does not emit another expiry");
+    assert.equal(
+      expirations,
+      1,
+      "unauthenticated 401 does not emit another expiry",
+    );
 
     seed("old-session");
     globalThis.fetch = async () => {
@@ -53,59 +67,126 @@ test("authenticated requests expire only their own rejected session", async () =
       await assert.rejects(apiFetch("/me"));
       assert.equal(localStorage.getItem("chat_token"), "new-session");
     }
-    globalThis.fetch = async () => { throw new TypeError("Failed to fetch"); };
+    globalThis.fetch = async () => {
+      throw new TypeError("Failed to fetch");
+    };
     await assert.rejects(apiFetch("/me"), /Unable to connect/);
     assert.equal(localStorage.getItem("chat_token"), "new-session");
     globalThis.fetch = async () => response(200);
     assert.deepEqual(await apiFetch("/me"), {});
-    const { conversationService } = await server.ssrLoadModule("/src/services/conversations.js");
+    const { conversationService } = await server.ssrLoadModule(
+      "/src/services/conversations.js",
+    );
     globalThis.fetch = async (url) => {
       assert.equal(new URL(url).searchParams.get("mark_read"), "false");
       return response(200);
     };
     await conversationService.getMessages("chat");
+    globalThis.fetch = async (url) => {
+      assert.equal(new URL(url).searchParams.get("mark_read"), "false");
+      assert.equal(new URL(url).searchParams.get("around"), "older/id");
+      return response(200);
+    };
+    await conversationService.getMessages("chat", "older/id");
     globalThis.fetch = async (url, options) => {
-      assert.equal(new URL(url).pathname, "/conversations/chat/messages/stable-client-id");
+      const parsed = new URL(url);
+      assert.equal(parsed.pathname, "/search/messages");
+      assert.equal(parsed.searchParams.get("q"), "100% & notes");
+      assert.equal(parsed.searchParams.get("sender"), "peer");
+      assert.equal(parsed.searchParams.get("from"), "2026-09-01");
+      assert.equal(parsed.searchParams.get("to"), "2026-09-17");
+      assert.equal(parsed.searchParams.get("offset"), "50");
+      assert.ok(options.signal);
+      return response(200);
+    };
+    await conversationService.searchMessages("100% & notes", {
+      sender: "peer",
+      from: "2026-09-01",
+      to: "2026-09-17",
+      offset: 50,
+    });
+    globalThis.fetch = async (url, options) => {
+      assert.equal(
+        new URL(url).pathname,
+        "/conversations/chat/messages/stable-client-id",
+      );
       assert.equal(options.method, "PUT");
       assert.equal(JSON.parse(options.body).client_message_id, undefined);
       assert.ok(options.signal);
       return response(200);
     };
-    await conversationService.sendMessage("chat", { content: "retry", client_message_id: "stable-client-id" });
+    await conversationService.sendMessage("chat", {
+      content: "retry",
+      client_message_id: "stable-client-id",
+    });
 
     globalThis.XMLHttpRequest = class {
       upload = {};
       status = 401;
       responseText = "{}";
-      getResponseHeader() { return "application/json"; }
+      getResponseHeader() {
+        return "application/json";
+      }
       open() {}
       setRequestHeader() {}
-      send() { this.onload(); }
+      send() {
+        this.onload();
+      }
     };
-    await assert.rejects(uploadFileWithProgress(new Blob(["test"]), () => {}), /session has expired/);
+    await assert.rejects(
+      uploadFileWithProgress(new Blob(["test"]), () => {}),
+      /session has expired/,
+    );
     assert.equal(localStorage.getItem("chat_token"), null);
     assert.equal(expirations, 2);
-    const { MAX_UPLOAD_BYTES, UPLOAD_SIZE_ERROR, UPLOAD_REJECTED_ERROR } = await server.ssrLoadModule("/src/utils/uploadLimits.js");
+    const { MAX_UPLOAD_BYTES, UPLOAD_SIZE_ERROR, UPLOAD_REJECTED_ERROR } =
+      await server.ssrLoadModule("/src/utils/uploadLimits.js");
     let requests = 0;
-    globalThis.fetch = async () => { requests++; return response(413); };
+    globalThis.fetch = async () => {
+      requests++;
+      return response(413);
+    };
     globalThis.XMLHttpRequest = class {
-      constructor() { requests++; }
+      constructor() {
+        requests++;
+      }
       upload = {};
       status = 413;
       responseText = "<html>Too large</html>";
-      getResponseHeader() { return "text/html"; }
+      getResponseHeader() {
+        return "text/html";
+      }
       open() {}
       setRequestHeader() {}
-      send() { this.onload(); }
+      send() {
+        this.onload();
+      }
     };
     const oversized = { size: MAX_UPLOAD_BYTES + 1 };
-    await assert.rejects(conversationService.uploadFile(oversized), { message: UPLOAD_SIZE_ERROR });
-    await assert.rejects(conversationService.uploadFile(oversized, () => {}), { message: UPLOAD_SIZE_ERROR });
-    await assert.rejects(uploadFileWithProgress(oversized, () => {}), { message: UPLOAD_SIZE_ERROR });
+    await assert.rejects(conversationService.uploadFile(oversized), {
+      message: UPLOAD_SIZE_ERROR,
+    });
+    await assert.rejects(
+      conversationService.uploadFile(oversized, () => {}),
+      { message: UPLOAD_SIZE_ERROR },
+    );
+    await assert.rejects(
+      uploadFileWithProgress(oversized, () => {}),
+      { message: UPLOAD_SIZE_ERROR },
+    );
     assert.equal(requests, 0, "oversized files never reach either transport");
-    await assert.rejects(conversationService.uploadFile(new Blob(["small"])), { message: UPLOAD_REJECTED_ERROR });
-    await assert.rejects(uploadFileWithProgress(new Blob(["small"]), () => {}), { message: UPLOAD_REJECTED_ERROR });
-    assert.equal(requests, 2, "valid-size files reach the server and surface proxy rejections");
+    await assert.rejects(conversationService.uploadFile(new Blob(["small"])), {
+      message: UPLOAD_REJECTED_ERROR,
+    });
+    await assert.rejects(
+      uploadFileWithProgress(new Blob(["small"]), () => {}),
+      { message: UPLOAD_REJECTED_ERROR },
+    );
+    assert.equal(
+      requests,
+      2,
+      "valid-size files reach the server and surface proxy rejections",
+    );
   } finally {
     await server.close();
     for (const [key, descriptor] of descriptors) {

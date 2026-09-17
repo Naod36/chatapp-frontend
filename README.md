@@ -3,15 +3,15 @@
 ## Conversation Organization
 
 - Deploy the backend `conversation_organization` migration and authenticated
-	`GET/PATCH /conversation-organization` routes before using archives and folders.
+  `GET/PATCH /conversation-organization` routes before using archives and folders.
 - Archives hide conversations from Inbox, Unread, and Groups without changing mute or
-	notification settings. New messages do not automatically unarchive a conversation.
-	Custom folders include archived members; deleting folders never deletes conversations.
+  notification settings. New messages do not automatically unarchive a conversation.
+  Custom folders include archived members; deleting folders never deletes conversations.
 - Organization is server-owned per account, refreshed on focus and every 15 seconds while
-	visible. Only confirmed mutations update the UI. On ambiguous errors, refresh before retrying.
-	Mobile clients do not yet consume this organization API.
+  visible. Only confirmed mutations update the UI. On ambiguous errors, refresh before retrying.
+  Mobile clients do not yet consume this organization API.
 - Focused checks: `node --test tests/conversation-organization.test.js` and `npm run build`.
-	Live database persistence and concurrent-client checks remain pending.
+  Live database persistence and concurrent-client checks remain pending.
 
 This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
 

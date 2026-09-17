@@ -73,17 +73,29 @@ test("ImageLightbox: navigation, keyboard, zoom reset and dismissal", async () =
     await click(document.querySelector('[aria-label="Next image"]'));
     assert.equal(counterText(), "3 / 3");
     await click(document.querySelector('[aria-label="Next image"]'));
-    assert.equal(counterText(), "1 / 3", "next wraps around past the last image");
+    assert.equal(
+      counterText(),
+      "1 / 3",
+      "next wraps around past the last image",
+    );
 
     await click(document.querySelector('[aria-label="Previous image"]'));
-    assert.equal(counterText(), "3 / 3", "previous wraps around past the first image");
+    assert.equal(
+      counterText(),
+      "3 / 3",
+      "previous wraps around past the first image",
+    );
 
     await flush(() =>
-      window.dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowLeft" })),
+      window.dispatchEvent(
+        new window.KeyboardEvent("keydown", { key: "ArrowLeft" }),
+      ),
     );
     assert.equal(counterText(), "2 / 3", "left arrow key navigates backward");
     await flush(() =>
-      window.dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowRight" })),
+      window.dispatchEvent(
+        new window.KeyboardEvent("keydown", { key: "ArrowRight" }),
+      ),
     );
     assert.equal(counterText(), "3 / 3", "right arrow key navigates forward");
 
@@ -99,7 +111,9 @@ test("ImageLightbox: navigation, keyboard, zoom reset and dismissal", async () =
       "double-click zooms to ~2.5x",
     );
     await flush(() =>
-      window.dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowRight" })),
+      window.dispatchEvent(
+        new window.KeyboardEvent("keydown", { key: "ArrowRight" }),
+      ),
     );
     assert.match(
       imgByAlt("First").style.transform,
@@ -116,22 +130,34 @@ test("ImageLightbox: navigation, keyboard, zoom reset and dismissal", async () =
     // Dismissal: Escape, backdrop click, and clicking the image itself (should NOT close).
     closedCount = 0;
     await flush(() =>
-      window.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape" })),
+      window.dispatchEvent(
+        new window.KeyboardEvent("keydown", { key: "Escape" }),
+      ),
     );
     assert.equal(closedCount, 1, "Escape key closes the lightbox");
 
     closedCount = 0;
     await click(imgByAlt("First"));
-    assert.equal(closedCount, 0, "clicking the image itself does not close the lightbox");
+    assert.equal(
+      closedCount,
+      0,
+      "clicking the image itself does not close the lightbox",
+    );
 
     closedCount = 0;
     await click(dialog());
-    assert.equal(closedCount, 1, "clicking the dark backdrop closes the lightbox");
+    assert.equal(
+      closedCount,
+      1,
+      "clicking the dark backdrop closes the lightbox",
+    );
 
     // Listeners must be removed on unmount.
     await flush(() => root.unmount());
     closedCount = 0;
-    window.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape" }));
+    window.dispatchEvent(
+      new window.KeyboardEvent("keydown", { key: "Escape" }),
+    );
     assert.equal(closedCount, 0, "keydown listener is removed after unmount");
   } finally {
     root.unmount();
@@ -298,7 +324,11 @@ test("ChatDashboard: image click opens lightbox at the right index and multi-ima
         '.ht-chat-pane input[type="file"]',
       );
       assert.ok(fileInput, "expected the attachment file input");
-      assert.equal(fileInput.multiple, true, "file input must allow multiple selection");
+      assert.equal(
+        fileInput.multiple,
+        true,
+        "file input must allow multiple selection",
+      );
       Object.defineProperty(fileInput, "files", {
         configurable: true,
         value: files,
@@ -330,23 +360,35 @@ test("ChatDashboard: image click opens lightbox at the right index and multi-ima
     const secondThumb = thumbnails().find((el) => el.src.includes("img-2"));
     await click(secondThumb);
     assert.ok(dialog(), "lightbox opens on image click");
-    assert.equal(counterText(), "2 / 3", "lightbox opens at the clicked image's index");
+    assert.equal(
+      counterText(),
+      "2 / 3",
+      "lightbox opens at the clicked image's index",
+    );
 
     // (b) next/prev navigation cycles through all image messages.
     await click(document.querySelector('[aria-label="Next image"]'));
     assert.equal(counterText(), "3 / 3");
     await click(document.querySelector('[aria-label="Next image"]'));
-    assert.equal(counterText(), "1 / 3", "navigation cycles back to the first image");
+    assert.equal(
+      counterText(),
+      "1 / 3",
+      "navigation cycles back to the first image",
+    );
     await click(document.querySelector('[aria-label="Previous image"]'));
     assert.equal(counterText(), "3 / 3");
 
     // (c) keyboard arrows navigate and Escape closes.
     await flush(() =>
-      window.dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowLeft" })),
+      window.dispatchEvent(
+        new window.KeyboardEvent("keydown", { key: "ArrowLeft" }),
+      ),
     );
     assert.equal(counterText(), "2 / 3", "left arrow navigates backward");
     await flush(() =>
-      window.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape" })),
+      window.dispatchEvent(
+        new window.KeyboardEvent("keydown", { key: "Escape" }),
+      ),
     );
     assert.equal(dialog(), null, "Escape closes the lightbox");
 
@@ -354,10 +396,17 @@ test("ChatDashboard: image click opens lightbox at the right index and multi-ima
     // ImageLightbox; re-open here and confirm state starts fresh each time).
     await click(thumbnails()[0]);
     assert.equal(counterText(), "1 / 3");
-    const currentImg = () => document.querySelector('[aria-label="Image viewer"] img');
-    assert.match(currentImg().style.transform, /scale\(1\)/, "reopening starts at 1x zoom");
+    const currentImg = () =>
+      document.querySelector('[aria-label="Image viewer"] img');
+    assert.match(
+      currentImg().style.transform,
+      /scale\(1\)/,
+      "reopening starts at 1x zoom",
+    );
     await flush(() =>
-      window.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape" })),
+      window.dispatchEvent(
+        new window.KeyboardEvent("keydown", { key: "Escape" }),
+      ),
     );
 
     // (f) a single non-image file still follows the original (caption/preview) flow.
@@ -370,7 +419,11 @@ test("ChatDashboard: image click opens lightbox at the right index and multi-ima
       /report\.pdf/,
       "single non-image file shows the existing attachment preview",
     );
-    assert.equal(uploadResolvers.length, 0, "selecting a document alone must not auto-upload");
+    assert.equal(
+      uploadResolvers.length,
+      0,
+      "selecting a document alone must not auto-upload",
+    );
     assert.equal(
       document.querySelectorAll(".ht-message-stream img").length,
       3,
@@ -380,7 +433,8 @@ test("ChatDashboard: image click opens lightbox at the right index and multi-ima
     const nameLabel = [...document.querySelectorAll(".ht-chat-pane div")].find(
       (d) => d.children.length === 0 && d.textContent.trim() === "report.pdf",
     );
-    const attachmentContainer = nameLabel?.parentElement?.parentElement?.parentElement;
+    const attachmentContainer =
+      nameLabel?.parentElement?.parentElement?.parentElement;
     const cancelBtn = attachmentContainer?.querySelector("button");
     assert.ok(cancelBtn, "expected the attachment cancel button");
     await click(cancelBtn);
@@ -400,7 +454,9 @@ test("ChatDashboard: image click opens lightbox at the right index and multi-ima
     assert.equal(uploadResolvers.length, 1, "first file uploads immediately");
     assert.match(progressText(), /Sending 1 of 3/);
 
-    await flush(() => uploadResolvers[0].resolve({ url: "/uploaded-batch-1.png" }));
+    await flush(() =>
+      uploadResolvers[0].resolve({ url: "/uploaded-batch-1.png" }),
+    );
     assert.equal(
       uploadResolvers.length,
       2,
@@ -416,7 +472,9 @@ test("ChatDashboard: image click opens lightbox at the right index and multi-ima
     );
     assert.match(progressText(), /Sending 3 of 3/);
 
-    await flush(() => uploadResolvers[2].resolve({ url: "/uploaded-batch-3.png" }));
+    await flush(() =>
+      uploadResolvers[2].resolve({ url: "/uploaded-batch-3.png" }),
+    );
 
     assert.equal(
       document.querySelector(".ht-upload-progress-container"),

@@ -1,5 +1,13 @@
-export function trackMessageArrivals(messages, previousIds, unseenIds, userId, following) {
-  const currentIds = new Set(messages.map((message) => String(message.id || message.message_id)));
+export function trackMessageArrivals(
+  messages,
+  previousIds,
+  unseenIds,
+  userId,
+  following,
+) {
+  const currentIds = new Set(
+    messages.map((message) => String(message.id || message.message_id)),
+  );
   const nextUnseenIds = new Set();
   let hasArrivals = false;
 

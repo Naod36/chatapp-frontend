@@ -2,6 +2,7 @@ import { validateUploadSize } from "../utils/uploadLimits.js";
 import { useConversationDrafts } from "../hooks/useConversationDrafts.js";
 import { useOutbox } from "../hooks/useOutbox.js";
 import useConversationOrganization from "../hooks/useConversationOrganization.js";
+import useMessageSearch from "../hooks/useMessageSearch.js";
 import { mergeOutbox } from "../utils/outbox.js";
 import { useEffect, useRef, useState } from "react";
 import { userService } from "../services/user";
@@ -164,6 +165,13 @@ export default function ChatDashboard({ user, onLogout }) {
   const [messages, setMessages] = useState([]);
   const [editText, setEditText] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchFilters, setSearchFilters] = useState({
+    sender: "",
+    from: "",
+    to: "",
+  });
+  const [historyTarget, setHistoryTarget] = useState(null);
+  const historyTargetRef = useRef(null);
   const [searchResults, setSearchResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
   const [wsConnected, setWsConnected] = useState(false);
@@ -187,14 +195,18 @@ export default function ChatDashboard({ user, onLogout }) {
   const [conversationsLoading, setConversationsLoading] = useState(true);
   const conversationRequestRef = useRef(0);
   const historyRequestRef = useRef(0);
-  const [historyState, setHistoryState] = useState({ loading: false, error: null });
+  const [historyState, setHistoryState] = useState({
+    loading: false,
+    error: null,
+  });
   const [searchError, setSearchError] = useState(null);
   const [searchAttempt, setSearchAttempt] = useState(0);
   const errorToastTimeoutRef = useRef(null);
 
   const showError = (msg) => {
     setErrorToast(msg);
-    if (errorToastTimeoutRef.current) clearTimeout(errorToastTimeoutRef.current);
+    if (errorToastTimeoutRef.current)
+      clearTimeout(errorToastTimeoutRef.current);
     errorToastTimeoutRef.current = setTimeout(() => {
       setErrorToast(null);
     }, 5000);
@@ -202,7 +214,8 @@ export default function ChatDashboard({ user, onLogout }) {
 
   useEffect(() => {
     return () => {
-      if (errorToastTimeoutRef.current) clearTimeout(errorToastTimeoutRef.current);
+      if (errorToastTimeoutRef.current)
+        clearTimeout(errorToastTimeoutRef.current);
     };
   }, []);
 
@@ -233,7 +246,10 @@ export default function ChatDashboard({ user, onLogout }) {
   const batchCancelRef = useRef(false);
   const [replyingTo, setReplyingTo] = useState(null);
   const [editingMessage, setEditingMessage] = useState(null);
-  const { drafts, setDraft, captureDraft, moveDraft } = useConversationDrafts(String(user.userId), showError);
+  const { drafts, setDraft, captureDraft, moveDraft } = useConversationDrafts(
+    String(user.userId),
+    showError,
+  );
   const sendingMessageRef = useRef(false);
   const outbox = useOutbox(String(user.userId), showError);
   const pendingSendIdsRef = useRef(new Set());
@@ -316,6 +332,13 @@ export default function ChatDashboard({ user, onLogout }) {
     acknowledgeOutgoing,
   } = useBlockState(user?.token);
 
+  const messageSearch = useMessageSearch(
+    searchQuery,
+    searchFilters,
+    user.token,
+    blockRevision,
+  );
+
   const isBlocked = (userId) => blockedUserIds.includes(String(userId));
   const isBlockedBy = (userId) => blockedByUserIds.includes(String(userId));
   const activeBlockPolicy = directBlockPolicy(
@@ -328,16 +351,30 @@ export default function ChatDashboard({ user, onLogout }) {
   const conversationsForDisplay = conversations.map((conversation) =>
     maskConversation(conversation, blockedByUserIds),
   );
-  const messagesForDisplay = mergeOutbox(messages, outbox.entries, activeConv?.id).map((message) =>
+  const messagesForDisplay = mergeOutbox(
+    messages,
+    outbox.entries,
+    activeConv?.id,
+  ).map((message) =>
     maskMessage(message, blockedByUserIds, activeBlockPolicy.incoming),
   );
   useEffect(() => {
-    const confirmed = new Set(messages.filter(isConfirmedMessage).map((message) => message.message_id || message.id));
-    const reconciled = outbox.entries.filter((entry) => entry.conversation_id === activeConv?.id && confirmed.has(entry.client_id));
+    const confirmed = new Set(
+      messages
+        .filter(isConfirmedMessage)
+        .map((message) => message.message_id || message.id),
+    );
+    const reconciled = outbox.entries.filter(
+      (entry) =>
+        entry.conversation_id === activeConv?.id &&
+        confirmed.has(entry.client_id),
+    );
     if (!reconciled.length) return;
     const temporaryIds = new Set(reconciled.map((entry) => entry.id));
     for (const entry of reconciled) outbox.remove(entry.client_id);
-    setMessages((previous) => previous.filter((message) => !temporaryIds.has(message.id)));
+    setMessages((previous) =>
+      previous.filter((message) => !temporaryIds.has(message.id)),
+    );
   }, [messages, outbox.entries, activeConv?.id]);
   const pinsForDisplay = Object.fromEntries(
     Object.entries(pinnedMessagesMap).map(([conversationId, pins]) => [
@@ -708,7 +745,9 @@ export default function ChatDashboard({ user, onLogout }) {
   useEffect(() => {
     const handleMouseMove = (e) => {
       if (isResizingLeft) {
-        const railWidth = document.querySelector(".ht-rail")?.getBoundingClientRect().width || 72;
+        const railWidth =
+          document.querySelector(".ht-rail")?.getBoundingClientRect().width ||
+          72;
         const newWidth = Math.min(Math.max(e.clientX - railWidth, 220), 550);
         setLeftSidebarWidth(newWidth);
         localStorage.setItem("chat_left_sidebar_width", String(newWidth));
@@ -1016,27 +1055,48 @@ export default function ChatDashboard({ user, onLogout }) {
       if (error) showError(error);
       if (activeConvRef.current?.id !== action.conversation_id) return;
       if (!error && action.action === "edit_message") {
-        setEditingMessage((current) => current?.id === action.message_id ? null : current);
-        setEditText((current) => current.trim() === action.content ? "" : current);
+        setEditingMessage((current) =>
+          current?.id === action.message_id ? null : current,
+        );
+        setEditText((current) =>
+          current.trim() === action.content ? "" : current,
+        );
       }
       if (error) {
         const token = user.token;
         const revision = dataRevisionRef.current;
+        const historyRequest = historyRequestRef.current;
         const [history, pins] = await Promise.allSettled([
-          conversationService.getMessages(action.conversation_id),
+          conversationService.getMessages(
+            action.conversation_id,
+            historyTargetRef.current,
+          ),
           conversationService.getPinnedMessages(action.conversation_id),
         ]);
-        if (blockStateRef.current.token !== token || revision !== dataRevisionRef.current ||
-            activeConvRef.current?.id !== action.conversation_id) return;
-        if (history.status === "fulfilled") setMessages((previous) => [
-          ...history.value.map((message) => ({ ...message, id: message.message_id || message.id })),
-          ...previous.filter((message) => !isConfirmedMessage(message)),
-        ]);
-        if (pins.status === "fulfilled") setPinnedMessagesMap((previous) => ({
-          ...previous, [action.conversation_id]: pins.value,
-        }));
+        if (
+          blockStateRef.current.token !== token ||
+          historyRequest !== historyRequestRef.current ||
+          revision !== dataRevisionRef.current ||
+          activeConvRef.current?.id !== action.conversation_id
+        )
+          return;
+        if (history.status === "fulfilled")
+          setMessages((previous) => [
+            ...history.value.map((message) => ({
+              ...message,
+              id: message.message_id || message.id,
+            })),
+            ...previous.filter((message) => !isConfirmedMessage(message)),
+          ]);
+        if (pins.status === "fulfilled")
+          setPinnedMessagesMap((previous) => ({
+            ...previous,
+            [action.conversation_id]: pins.value,
+          }));
         if (history.status === "rejected" || pins.status === "rejected") {
-          showError("Could not refresh the action result. Reopen this conversation before retrying.");
+          showError(
+            "Could not refresh the action result. Reopen this conversation before retrying.",
+          );
         }
       }
     },
@@ -1046,7 +1106,8 @@ export default function ChatDashboard({ user, onLogout }) {
       userId: user.userId,
       send: (action) => actionCallbacksRef.current.send(action),
       onChange: setPendingMessageAction,
-      onSettle: (action, error) => actionCallbacksRef.current.settle(action, error),
+      onSettle: (action, error) =>
+        actionCallbacksRef.current.settle(action, error),
     });
   }
   useEffect(() => () => actionTrackerRef.current?.dispose(), []);
@@ -1125,31 +1186,58 @@ export default function ChatDashboard({ user, onLogout }) {
   const inputTextareaRef = useRef(null);
   const loadedConversationRef = useRef(null);
   const compactVisibilityRef = useRef(null);
-  compactVisibilityRef.current = { compactChatOpen, compactNavigationOpen, showInspector };
+  compactVisibilityRef.current = {
+    compactChatOpen,
+    compactNavigationOpen,
+    showInspector,
+  };
 
   const isConversationVisible = (conversationId) => {
-    if (document.hidden || String(activeConvRef.current?.id) !== String(conversationId)) return false;
+    if (historyTargetRef.current) return false;
+    if (
+      document.hidden ||
+      String(activeConvRef.current?.id) !== String(conversationId)
+    )
+      return false;
     if (loadedConversationRef.current !== conversationId) return false;
     if (window.matchMedia("(max-width: 1100px)").matches) {
       const view = compactVisibilityRef.current;
-      if (!view.compactChatOpen || view.compactNavigationOpen || view.showInspector) return false;
+      if (
+        !view.compactChatOpen ||
+        view.compactNavigationOpen ||
+        view.showInspector
+      )
+        return false;
     }
     const container = chatContainerRef.current;
-    return Boolean(container && container.scrollHeight - container.scrollTop - container.clientHeight <= 120);
+    return Boolean(
+      container &&
+      container.scrollHeight - container.scrollTop - container.clientHeight <=
+        120,
+    );
   };
 
   const markVisibleConversationRead = (conversationId) => {
     if (!conversationId || !isConversationVisible(conversationId)) return false;
-    if (!safeSendWs({ action: "read_conversation", conversation_id: conversationId })) return false;
-    setConversations((previous) => previous.map((conversation) =>
-      conversation.id === conversationId && conversation.unread_count
-        ? { ...conversation, unread_count: 0 }
-        : conversation,
-    ));
+    if (
+      !safeSendWs({
+        action: "read_conversation",
+        conversation_id: conversationId,
+      })
+    )
+      return false;
+    setConversations((previous) =>
+      previous.map((conversation) =>
+        conversation.id === conversationId && conversation.unread_count
+          ? { ...conversation, unread_count: 0 }
+          : conversation,
+      ),
+    );
     return true;
   };
   const markVisibleReadRef = useRef(null);
-  markVisibleReadRef.current = () => markVisibleConversationRead(activeConvRef.current?.id);
+  markVisibleReadRef.current = () =>
+    markVisibleConversationRead(activeConvRef.current?.id);
 
   useEffect(() => {
     const refreshReadState = () => markVisibleReadRef.current();
@@ -1165,7 +1253,13 @@ export default function ChatDashboard({ user, onLogout }) {
 
   useEffect(() => {
     markVisibleReadRef.current();
-  }, [compactChatOpen, compactNavigationOpen, showInspector, wsConnected, blockStateReady]);
+  }, [
+    compactChatOpen,
+    compactNavigationOpen,
+    showInspector,
+    wsConnected,
+    blockStateReady,
+  ]);
 
   activeConvRef.current = activeConv;
   conversationsRef.current = conversations;
@@ -1238,7 +1332,8 @@ export default function ChatDashboard({ user, onLogout }) {
     if (!container) return;
     const distanceFromBottom =
       container.scrollHeight - container.scrollTop - container.clientHeight;
-    followLatestRef.current = distanceFromBottom <= 120;
+    followLatestRef.current =
+      !historyTargetRef.current && distanceFromBottom <= 120;
     if (distanceFromBottom > 120) {
       setShowScrollBottomBtn(true);
     } else {
@@ -1254,13 +1349,20 @@ export default function ChatDashboard({ user, onLogout }) {
     const container = chatContainerRef.current;
     if (!container) return;
     const arrivals = trackMessageArrivals(
-      messages, renderedMessageIdsRef.current, unseenMessageIdsRef.current,
-      user.userId, followLatestRef.current,
+      messages,
+      renderedMessageIdsRef.current,
+      unseenMessageIdsRef.current,
+      user.userId,
+      followLatestRef.current,
     );
     const previousMessageCount = renderedMessageIdsRef.current.size;
     renderedMessageIdsRef.current = arrivals.currentIds;
     unseenMessageIdsRef.current = arrivals.unseenIds;
-    if (followLatestRef.current && (arrivals.hasArrivals || messages.length > 0 && previousMessageCount === 0)) {
+    if (
+      followLatestRef.current &&
+      (arrivals.hasArrivals ||
+        (messages.length > 0 && previousMessageCount === 0))
+    ) {
       scrollToBottom(true);
     } else {
       setNewMessagesBelowCount(arrivals.unseenIds.size);
@@ -1268,13 +1370,25 @@ export default function ChatDashboard({ user, onLogout }) {
   }, [messages, user.userId]);
 
   // Load initial conversations list
+  useEffect(() => {
+    if (!historyTarget || historyState.loading || historyState.error) return;
+    const target = document.getElementById(`msg-${historyTarget}`);
+    target?.scrollIntoView({ block: "center", behavior: "auto" });
+    target?.classList.add("ht-search-highlight");
+    return () => target?.classList.remove("ht-search-highlight");
+  }, [historyTarget, historyState.loading, historyState.error]);
+
   const loadConversations = async () => {
     const revision = dataRevisionRef.current;
     const request = ++conversationRequestRef.current;
     setConversationsLoading(true);
     try {
       const rawList = await conversationService.listConversations();
-      if (revision !== dataRevisionRef.current || request !== conversationRequestRef.current) return;
+      if (
+        revision !== dataRevisionRef.current ||
+        request !== conversationRequestRef.current
+      )
+        return;
       setConversationError(null);
       const normalized = rawList.map((c) => {
         const isGroup = c.type === "group";
@@ -1353,11 +1467,15 @@ export default function ChatDashboard({ user, onLogout }) {
       }
     } catch (err) {
       console.error("Failed to load conversations:", err);
-      if (revision === dataRevisionRef.current && request === conversationRequestRef.current) {
+      if (
+        revision === dataRevisionRef.current &&
+        request === conversationRequestRef.current
+      ) {
         setConversationError("Could not load conversations.");
       }
     } finally {
-      if (request === conversationRequestRef.current) setConversationsLoading(false);
+      if (request === conversationRequestRef.current)
+        setConversationsLoading(false);
     }
   };
 
@@ -1375,7 +1493,10 @@ export default function ChatDashboard({ user, onLogout }) {
       const request = ++historyRequestRef.current;
       setHistoryState({ loading: true, error: null });
       const [history, pins] = await Promise.allSettled([
-        conversationService.getMessages(conversation.id),
+        conversationService.getMessages(
+          conversation.id,
+          historyTargetRef.current,
+        ),
         conversationService.getPinnedMessages(conversation.id),
       ]);
       if (
@@ -1430,11 +1551,14 @@ export default function ChatDashboard({ user, onLogout }) {
     const interval = setInterval(async () => {
       const conv = activeConvRef.current;
       const revision = dataRevisionRef.current;
+      const historyRequest = historyRequestRef.current;
+      if (historyTargetRef.current) return;
       if (!conv || !conv.id || conv.id === "virtual-saved-messages") return;
       try {
         const history = await conversationService.getMessages(conv.id);
         if (
           revision !== dataRevisionRef.current ||
+          historyRequest !== historyRequestRef.current ||
           activeConvRef.current?.id !== conv.id
         )
           return;
@@ -1509,7 +1633,9 @@ export default function ChatDashboard({ user, onLogout }) {
       // onMessage callback
       (data) => {
         if (data.event === "error") {
-          actionTrackerRef.current.fail(data.message || "The server rejected the action.");
+          actionTrackerRef.current.fail(
+            data.message || "The server rejected the action.",
+          );
           showError(data.message || "The server rejected the action.");
           return;
         }
@@ -1645,7 +1771,7 @@ export default function ChatDashboard({ user, onLogout }) {
           });
 
           // If incoming message belongs to our selected thread, push to chat bubble list with deduplication
-          if (isCurrentActive) {
+          if (isCurrentActive && !historyTargetRef.current) {
             setMessages((prev) => {
               // Don't add if message with exact ID is already in list
               if (
@@ -1777,8 +1903,11 @@ export default function ChatDashboard({ user, onLogout }) {
           setMessages((prev) => prev.filter((m) => m.id !== data.message_id));
           setPinnedMessagesMap((previous) => ({
             ...previous,
-            [data.conversation_id]: (previous[data.conversation_id] || []).filter(
-              (pin) => String(pin.message_id || pin.id) !== String(data.message_id),
+            [data.conversation_id]: (
+              previous[data.conversation_id] || []
+            ).filter(
+              (pin) =>
+                String(pin.message_id || pin.id) !== String(data.message_id),
             ),
           }));
         } else if (data.event === "message_reacted") {
@@ -1834,7 +1963,11 @@ export default function ChatDashboard({ user, onLogout }) {
             [data.conversation_id]: data.message_id,
           }));
         } else if (data.event === "message_unpinned") {
-          if (data.scope === "personal" && String(data.pinned_by_user_id) !== String(user.userId)) return;
+          if (
+            data.scope === "personal" &&
+            String(data.pinned_by_user_id) !== String(user.userId)
+          )
+            return;
           setPinnedMessagesMap((prev) => {
             const list = prev[data.conversation_id] || [];
             const filtered = list.filter(
@@ -1968,7 +2101,9 @@ export default function ChatDashboard({ user, onLogout }) {
       },
       // onClose callback
       () => {
-        actionTrackerRef.current.fail("Connection lost before confirmation. Check the refreshed conversation before retrying.");
+        actionTrackerRef.current.fail(
+          "Connection lost before confirmation. Check the refreshed conversation before retrying.",
+        );
         setWsConnected(false);
         if (!disposed)
           reconnectTimer = setTimeout(
@@ -1990,9 +2125,15 @@ export default function ChatDashboard({ user, onLogout }) {
   }, [user.token, connectionAttempt]);
 
   // Load messages when selecting active conversation
-  const handleSelectConversation = async (conv, preserveMessages = false) => {
+  const handleSelectConversation = async (
+    conv,
+    preserveMessages = false,
+    targetMessage = null,
+  ) => {
     const request = ++historyRequestRef.current;
-    followLatestRef.current = true;
+    historyTargetRef.current = targetMessage;
+    setHistoryTarget(targetMessage);
+    followLatestRef.current = !targetMessage;
     renderedMessageIdsRef.current = new Set();
     unseenMessageIdsRef.current = new Set();
     setNewMessagesBelowCount(0);
@@ -2015,7 +2156,11 @@ export default function ChatDashboard({ user, onLogout }) {
       try {
         const response =
           await conversationService.createConversation(currentUserId);
-        if (request !== historyRequestRef.current || revision !== dataRevisionRef.current) return;
+        if (
+          request !== historyRequestRef.current ||
+          revision !== dataRevisionRef.current
+        )
+          return;
 
         const realSelfConv = {
           id: response.conversation_id,
@@ -2031,15 +2176,24 @@ export default function ChatDashboard({ user, onLogout }) {
         loadConversations();
       } catch (err) {
         console.error("Failed to lazy-create saved messages:", err);
-        if (request === historyRequestRef.current && revision === dataRevisionRef.current) {
-          setHistoryState({ loading: false, error: "Could not open Saved Messages." });
+        if (
+          request === historyRequestRef.current &&
+          revision === dataRevisionRef.current
+        ) {
+          setHistoryState({
+            loading: false,
+            error: "Could not open Saved Messages.",
+          });
         }
         return;
       }
     }
 
     try {
-      const history = await conversationService.getMessages(conv.id);
+      const history = await conversationService.getMessages(
+        conv.id,
+        targetMessage,
+      );
       if (
         request !== historyRequestRef.current ||
         revision !== dataRevisionRef.current ||
@@ -2052,9 +2206,13 @@ export default function ChatDashboard({ user, onLogout }) {
       }));
       const uniqueMap = new Map();
       mapped.forEach((m) => uniqueMap.set(m.id, m));
+      if (targetMessage && !uniqueMap.has(targetMessage))
+        throw new Error("Message is no longer available.");
       setMessages((previous) => [
         ...uniqueMap.values(),
-        ...(preserveMessages ? previous.filter((message) => !isConfirmedMessage(message)) : []),
+        ...(preserveMessages
+          ? previous.filter((message) => !isConfirmedMessage(message))
+          : []),
       ]);
       loadedConversationRef.current = conv.id;
       setHistoryState({ loading: false, error: null });
@@ -2076,7 +2234,11 @@ export default function ChatDashboard({ user, onLogout }) {
       markVisibleConversationRead(conv.id);
     } catch (err) {
       console.error("Failed to load messages:", err);
-      if (request === historyRequestRef.current && revision === dataRevisionRef.current && activeConvRef.current?.id === conv.id) {
+      if (
+        request === historyRequestRef.current &&
+        revision === dataRevisionRef.current &&
+        activeConvRef.current?.id === conv.id
+      ) {
         setHistoryState({ loading: false, error: "Could not load messages." });
       }
     }
@@ -2110,7 +2272,7 @@ export default function ChatDashboard({ user, onLogout }) {
       cancelled = true;
       clearTimeout(delayDebounceFn);
     };
-  }, [searchQuery, blockRevision, searchAttempt]);
+  }, [searchQuery, blockRevision, searchAttempt, user.token]);
 
   const handleAvatarFileSelect = async (e) => {
     const file = e.target.files?.[0];
@@ -2123,7 +2285,9 @@ export default function ChatDashboard({ user, onLogout }) {
       setErrorToast(null);
     } catch (err) {
       console.error("Avatar upload failed:", err);
-      showError(err.message || "Could not upload your avatar. Please try again.");
+      showError(
+        err.message || "Could not upload your avatar. Please try again.",
+      );
     } finally {
       setIsUploadingAvatar(false);
       e.target.value = "";
@@ -2145,14 +2309,19 @@ export default function ChatDashboard({ user, onLogout }) {
       });
       const freshProfile = await userService.getProfile();
       if (freshProfile) {
-        setMyProfile((current) => current === myProfile ? freshProfile : current);
+        setMyProfile((current) =>
+          current === myProfile ? freshProfile : current,
+        );
       }
       setErrorToast(null);
       setProfileSavedToast(true);
       setTimeout(() => setProfileSavedToast(false), 3000);
     } catch (err) {
       console.error("Failed to update profile:", err);
-      showError(err.message || "Could not save your profile. Your changes are still here.");
+      showError(
+        err.message ||
+          "Could not save your profile. Your changes are still here.",
+      );
     } finally {
       setIsSavingProfile(false);
     }
@@ -2348,11 +2517,19 @@ export default function ChatDashboard({ user, onLogout }) {
   };
 
   // Send Message Workflow
-  const sendOptimisticMessage = async (conversation, payload, retryEntry = null) => {
+  const sendOptimisticMessage = async (
+    conversation,
+    payload,
+    retryEntry = null,
+  ) => {
     if (!canSendToConversation(conversation)) return;
-    const previous = retryEntry || outbox.entries.find((entry) =>
-      entry.conversation_id === conversation.id &&
-      JSON.stringify(entry.payload) === JSON.stringify(payload));
+    const previous =
+      retryEntry ||
+      outbox.entries.find(
+        (entry) =>
+          entry.conversation_id === conversation.id &&
+          JSON.stringify(entry.payload) === JSON.stringify(payload),
+      );
     const clientId = previous?.client_id || crypto.randomUUID();
     if (pendingSendIdsRef.current.has(clientId)) return;
     pendingSendIdsRef.current.add(clientId);
@@ -2371,7 +2548,10 @@ export default function ChatDashboard({ user, onLogout }) {
     const token = user.token;
     outbox.put(localMsg);
     if (activeConvRef.current?.id === conversation.id) {
-      setMessages((prev) => [...prev.filter((message) => message.id !== localMsg.id), localMsg]);
+      setMessages((prev) => [
+        ...prev.filter((message) => message.id !== localMsg.id),
+        localMsg,
+      ]);
     }
     setConversations((prev) => {
       const updated = prev.map((conversationItem) =>
@@ -2461,24 +2641,34 @@ export default function ChatDashboard({ user, onLogout }) {
       return;
     }
     const clearDraft = captureDraft(activeConv.id);
-    const matchesDraft = message.payload.content === (drafts[activeConv.id] || "");
+    const matchesDraft =
+      message.payload.content === (drafts[activeConv.id] || "");
     try {
       if (await sendOptimisticMessage(activeConv, message.payload, message)) {
         if (matchesDraft) clearDraft();
       }
-    } catch (error) { showError(error.message || "Could not retry the message."); }
+    } catch (error) {
+      showError(error.message || "Could not retry the message.");
+    }
   };
 
   const handleDiscardMessage = (message) => {
     if (pendingSendIdsRef.current.has(message.client_id)) return;
     outbox.remove(message.client_id);
-    setMessages((previous) => previous.filter((item) => item.id !== message.id));
+    setMessages((previous) =>
+      previous.filter((item) => item.id !== message.id),
+    );
     loadConversations();
   };
 
   const handleCopyFailedMessage = async (message) => {
-    try { await navigator.clipboard.writeText(message.content || message.media_url || ""); }
-    catch { showError("Could not copy the message."); }
+    try {
+      await navigator.clipboard.writeText(
+        message.content || message.media_url || "",
+      );
+    } catch {
+      showError("Could not copy the message.");
+    }
   };
 
   const handleSendMessage = async (e) => {
@@ -2497,10 +2687,10 @@ export default function ChatDashboard({ user, onLogout }) {
     // If editing an existing message
     if (editingMessage) {
       sendMessageAction({
-          action: "edit_message",
-          conversation_id: activeConv.id,
-          message_id: editingMessage.id,
-          content: messageText.trim(),
+        action: "edit_message",
+        conversation_id: activeConv.id,
+        message_id: editingMessage.id,
+        content: messageText.trim(),
       });
       return;
     }
@@ -2541,7 +2731,9 @@ export default function ChatDashboard({ user, onLogout }) {
       if (!canSendToConversation(activeConv)) return;
 
       if (selectedFile && activeConvRef.current?.id === activeConv.id) {
-        setSelectedFile((current) => current === selectedFile ? null : current);
+        setSelectedFile((current) =>
+          current === selectedFile ? null : current,
+        );
         setFilePreview((current) => {
           if (current !== filePreview) return current;
           if (current?.startsWith("blob:")) URL.revokeObjectURL(current);
@@ -2560,8 +2752,10 @@ export default function ChatDashboard({ user, onLogout }) {
       if (confirmed) {
         clearSentDraft();
         if (activeConvRef.current?.id === activeConv.id) {
-          setReplyingTo((current) => current === replyingTo ? null : current);
-          setSelectedFile((current) => current === selectedFile ? null : current);
+          setReplyingTo((current) => (current === replyingTo ? null : current));
+          setSelectedFile((current) =>
+            current === selectedFile ? null : current,
+          );
           setFilePreview((current) => {
             if (current !== filePreview) return current;
             if (current?.startsWith("blob:")) URL.revokeObjectURL(current);
@@ -2630,7 +2824,11 @@ export default function ChatDashboard({ user, onLogout }) {
   const handleDeleteMsg = (msg) => {
     if (!canSendToConversation(activeConv)) return;
     const targetId = msg.id || msg.message_id;
-    sendMessageAction({ action: "delete_message", conversation_id: activeConv.id, message_id: targetId });
+    sendMessageAction({
+      action: "delete_message",
+      conversation_id: activeConv.id,
+      message_id: targetId,
+    });
     handleCloseContextMenu();
   };
 
@@ -2742,13 +2940,16 @@ export default function ChatDashboard({ user, onLogout }) {
   const executePin = (msg, scope = "shared", notify = true) => {
     if (!activeConv || !msg || !canSendToConversation(activeConv)) return;
     const msgId = String(msg.id || msg.message_id || "");
-    if (!sendMessageAction({
-      action: "pin_message",
-      conversation_id: String(activeConv.id),
-      message_id: msgId,
-      scope,
-      notify,
-    })) return;
+    if (
+      !sendMessageAction({
+        action: "pin_message",
+        conversation_id: String(activeConv.id),
+        message_id: msgId,
+        scope,
+        notify,
+      })
+    )
+      return;
 
     setPinScopePromptMsg(null);
     setPinNotifyStep(false);
@@ -2874,14 +3075,33 @@ export default function ChatDashboard({ user, onLogout }) {
   return (
     <div
       className={`ht-app-container ${theme === "dark" ? "ht-dark-theme" : "ht-light-theme"}`}
-      data-compact-view={compactNavigationOpen ? "navigation" : showInspector && activeConv ? "details" : compactChatOpen && activeConv ? "chat" : "list"}
+      data-compact-view={
+        compactNavigationOpen
+          ? "navigation"
+          : showInspector && activeConv
+            ? "details"
+            : compactChatOpen && activeConv
+              ? "chat"
+              : "list"
+      }
       style={{ background: t.chatBg, color: t.text }}
     >
-      <div className="ht-compact-header" style={{ background: t.sidebarBg, borderBottom: t.border }}>
-        {compactNavigationOpen || showInspector || (compactChatOpen && activeConv) ? (
+      <div
+        className="ht-compact-header"
+        style={{ background: t.sidebarBg, borderBottom: t.border }}
+      >
+        {compactNavigationOpen ||
+        showInspector ||
+        (compactChatOpen && activeConv) ? (
           <button
             type="button"
-            aria-label={compactNavigationOpen ? "Back to inbox" : showInspector ? "Back to conversation" : "Back to conversations"}
+            aria-label={
+              compactNavigationOpen
+                ? "Back to inbox"
+                : showInspector
+                  ? "Back to conversation"
+                  : "Back to conversations"
+            }
             title="Back"
             onClick={() => {
               if (compactNavigationOpen) setCompactNavigationOpen(false);
@@ -2889,14 +3109,45 @@ export default function ChatDashboard({ user, onLogout }) {
               else setCompactChatOpen(false);
             }}
           >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M19 12H5m7-7-7 7 7 7" /></svg>
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              aria-hidden="true"
+            >
+              <path d="M19 12H5m7-7-7 7 7 7" />
+            </svg>
           </button>
         ) : (
-          <button type="button" aria-label="Open navigation" title="Open navigation" onClick={() => setCompactNavigationOpen(true)}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
+          <button
+            type="button"
+            aria-label="Open navigation"
+            title="Open navigation"
+            onClick={() => setCompactNavigationOpen(true)}
+          >
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              aria-hidden="true"
+            >
+              <path d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
           </button>
         )}
-        <span>{compactNavigationOpen ? "Navigation" : showInspector && activeConv ? "Conversation details" : "FlowChat"}</span>
+        <span>
+          {compactNavigationOpen
+            ? "Navigation"
+            : showInspector && activeConv
+              ? "Conversation details"
+              : "FlowChat"}
+        </span>
       </div>
       {errorToast && (
         <div
@@ -2976,6 +3227,27 @@ export default function ChatDashboard({ user, onLogout }) {
 
       {/* 2. Conversations / Settings / Profile Sidebar */}
       <ConversationList
+        messageSearch={{
+          ...messageSearch,
+          messages: blockStateReady
+            ? messageSearch.messages.map((message) =>
+                maskMessage(message, blockedByUserIds),
+              )
+            : [],
+        }}
+        searchFilters={searchFilters}
+        setSearchFilters={setSearchFilters}
+        onMessageSearchResult={(message) => {
+          const conversation = conversationsRef.current.find(
+            (item) => item.id === message.conversation_id,
+          );
+          if (conversation)
+            handleSelectConversation(conversation, false, message.id);
+          else
+            showError(
+              "Conversation is no longer available. Refresh the conversation list.",
+            );
+        }}
         organization={organization}
         drafts={drafts}
         conversationError={conversationError}
@@ -3027,12 +3299,20 @@ export default function ChatDashboard({ user, onLogout }) {
 
       {/* 3. Center Messaging Pane */}
       <ChatArea
+        historyTarget={historyTarget}
+        onLatestHistory={() => handleSelectConversation(activeConvRef.current)}
         handleRetryMessage={handleRetryMessage}
         handleDiscardMessage={handleDiscardMessage}
         handleCopyFailedMessage={handleCopyFailedMessage}
         historyError={historyState.error}
         historyLoading={historyState.loading}
-        onRetryHistory={() => handleSelectConversation(activeConvRef.current, true)}
+        onRetryHistory={() =>
+          handleSelectConversation(
+            activeConvRef.current,
+            true,
+            historyTargetRef.current,
+          )
+        }
         pendingMessageAction={pendingMessageAction}
         activeConv={activeConvForDisplay}
         blockedByUser={activeBlockPolicy.incoming}

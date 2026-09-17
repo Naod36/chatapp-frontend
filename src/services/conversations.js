@@ -29,17 +29,32 @@ export const conversationService = {
     return apiFetch("/conversations");
   },
 
-  async getMessages(conversationId) {
-    return apiFetch(`/conversations/${conversationId}/messages?mark_read=false`);
+  async getMessages(conversationId, around = null) {
+    return apiFetch(
+      `/conversations/${conversationId}/messages?mark_read=false${around ? `&around=${encodeURIComponent(around)}` : ""}`,
+    );
+  },
+
+  async searchMessages(query, filters = {}) {
+    const params = new URLSearchParams({ q: query });
+    for (const key of ["sender", "from", "to", "offset"]) {
+      if (filters[key]) params.set(key, String(filters[key]));
+    }
+    return apiFetch(`/search/messages?${params}`, {
+      signal: AbortSignal.timeout(15000),
+    });
   },
 
   async sendMessage(conversationId, message) {
     const { client_message_id, ...payload } = message;
-    return apiFetch(`/conversations/${conversationId}/messages${client_message_id ? `/${client_message_id}` : ""}`, {
-      method: client_message_id ? "PUT" : "POST",
-      signal: AbortSignal.timeout(20000),
-      body: JSON.stringify(payload),
-    });
+    return apiFetch(
+      `/conversations/${conversationId}/messages${client_message_id ? `/${client_message_id}` : ""}`,
+      {
+        method: client_message_id ? "PUT" : "POST",
+        signal: AbortSignal.timeout(20000),
+        body: JSON.stringify(payload),
+      },
+    );
   },
 
   async getPinnedMessages(conversationId) {

@@ -2,7 +2,9 @@ import { useState } from "react";
 import { createOutbox } from "../utils/outbox.js";
 
 export function useOutbox(accountId, onError) {
-  const [saved, setStore] = useState(() => createOutbox(accountId, localStorage));
+  const [saved, setStore] = useState(() =>
+    createOutbox(accountId, localStorage),
+  );
   const [, render] = useState(0);
   let store = saved;
   if (store.accountId !== accountId) {
@@ -11,7 +13,10 @@ export function useOutbox(accountId, onError) {
   }
   const update = (persisted) => {
     render((previous) => previous + 1);
-    if (!persisted) onError("Could not save outgoing messages for refresh. Keep this tab open.");
+    if (!persisted)
+      onError(
+        "Could not save outgoing messages for refresh. Keep this tab open.",
+      );
   };
   return {
     entries: store.entries,

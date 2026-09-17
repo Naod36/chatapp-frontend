@@ -19,6 +19,8 @@ export default function ChatArea({
   handleCopyFailedMessage,
   historyError = null,
   historyLoading = false,
+  historyTarget = null,
+  onLatestHistory,
   onRetryHistory,
   activeConv,
   blockedByUser = false,
@@ -171,10 +173,33 @@ export default function ChatArea({
 
   return (
     <div className="ht-chat-pane">
-      <LoadFeedback error={historyError} loading={historyLoading} label="Messages" onRetry={onRetryHistory} themeTokens={t} />
+      {historyTarget && (
+        <div className="ht-history-search-status" role="status">
+          <span>Search result</span>
+          <button type="button" onClick={onLatestHistory}>
+            Latest messages
+          </button>
+        </div>
+      )}
+      <LoadFeedback
+        error={historyError}
+        loading={historyLoading}
+        label="Messages"
+        onRetry={onRetryHistory}
+        themeTokens={t}
+      />
       {pendingMessageAction && (
-        <div role="status" style={{ padding: "8px 16px", color: t.text, background: t.cardBg, fontSize: 12 }}>
-          Waiting for server confirmation: {pendingMessageAction.action.replaceAll("_", " ")}...
+        <div
+          role="status"
+          style={{
+            padding: "8px 16px",
+            color: t.text,
+            background: t.cardBg,
+            fontSize: 12,
+          }}
+        >
+          Waiting for server confirmation:{" "}
+          {pendingMessageAction.action.replaceAll("_", " ")}...
         </div>
       )}
       {/* Floating Header Card */}
@@ -1254,16 +1279,53 @@ export default function ChatArea({
                     !blockedByUser &&
                     renderMessageStatus(m.status, false)}
                 </span>
-                {isSelf && m.status === "failed" && m.client_id && !blockedByUser && (
-                  <div style={{ maxWidth: "100%", fontSize: 12, color: t.textMuted, overflowWrap: "anywhere" }}>
-                    <div role="alert">{m.error || "Send not confirmed."}</div>
-                    <div className="ht-failed-message-actions" style={{ display: "flex", flexWrap: "wrap", gap: 8, color: t.accent }}>
-                      <button type="button" disabled={directReadOnly} onClick={() => handleRetryMessage(m)} aria-label="Retry failed message">Retry</button>
-                      <button type="button" onClick={() => handleCopyFailedMessage(m)} aria-label="Copy failed message">Copy</button>
-                      <button type="button" onClick={() => handleDiscardMessage(m)} aria-label="Discard failed message">Discard</button>
+                {isSelf &&
+                  m.status === "failed" &&
+                  m.client_id &&
+                  !blockedByUser && (
+                    <div
+                      style={{
+                        maxWidth: "100%",
+                        fontSize: 12,
+                        color: t.textMuted,
+                        overflowWrap: "anywhere",
+                      }}
+                    >
+                      <div role="alert">{m.error || "Send not confirmed."}</div>
+                      <div
+                        className="ht-failed-message-actions"
+                        style={{
+                          display: "flex",
+                          flexWrap: "wrap",
+                          gap: 8,
+                          color: t.accent,
+                        }}
+                      >
+                        <button
+                          type="button"
+                          disabled={directReadOnly}
+                          onClick={() => handleRetryMessage(m)}
+                          aria-label="Retry failed message"
+                        >
+                          Retry
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleCopyFailedMessage(m)}
+                          aria-label="Copy failed message"
+                        >
+                          Copy
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDiscardMessage(m)}
+                          aria-label="Discard failed message"
+                        >
+                          Discard
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
               </div>
             </div>
           );
@@ -2101,10 +2163,20 @@ export default function ChatArea({
                             totalFormatted: `${(blob.size / (1024 * 1024)).toFixed(1)} MB`,
                           });
                           try {
-                            const file = new File([blob], `voice_${Date.now()}.webm`, { type: blob.type });
-                            const data = await conversationService.uploadFile(file, (progress) => {
-                              setUploadProgress({ ...progress, kind: "voice" });
-                            });
+                            const file = new File(
+                              [blob],
+                              `voice_${Date.now()}.webm`,
+                              { type: blob.type },
+                            );
+                            const data = await conversationService.uploadFile(
+                              file,
+                              (progress) => {
+                                setUploadProgress({
+                                  ...progress,
+                                  kind: "voice",
+                                });
+                              },
+                            );
                             setIsUploading(false);
                             if (data.url && canSendToConversation(activeConv)) {
                               await sendOptimisticMessage(activeConv, {

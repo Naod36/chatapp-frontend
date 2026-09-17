@@ -1,5 +1,6 @@
 export const SESSION_EXPIRED_EVENT = "flowchat:session-expired";
-export const SESSION_EXPIRED_MESSAGE = "Your session has expired. Please sign in again.";
+export const SESSION_EXPIRED_MESSAGE =
+  "Your session has expired. Please sign in again.";
 
 export function expireSession(token) {
   if (!token || localStorage.getItem("chat_token") !== token) return false;

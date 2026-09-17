@@ -8,10 +8,15 @@ import { apiFetch, API_BASE } from "../../../services/api";
 import LoadFeedback from "../../LoadFeedback";
 import { MAX_UPLOAD_LABEL } from "../../../utils/uploadLimits.js";
 import OrganizationControls from "./OrganizationControls";
+import MessageSearchResults from "./MessageSearchResults";
 import { organizedConversations } from "../../../utils/conversationOrganization.js";
 
 export default function ConversationList({
   organization,
+  messageSearch,
+  searchFilters,
+  setSearchFilters,
+  onMessageSearchResult,
   drafts = {},
   conversationError,
   conversationsLoading,
@@ -55,13 +60,25 @@ export default function ConversationList({
 }) {
   const [latestRelease, setLatestRelease] = useState(null);
   const [isLoadingRelease, setIsLoadingRelease] = useState(false);
-  const inboxConversations = organizedConversations(conversations, organization, "all");
-  const unreadConversations = inboxConversations.filter((conversation) => Number(conversation.unread_count) > 0);
-  const visibleConversations = convoTab === "unread" ? unreadConversations : organizedConversations(conversations, organization, convoTab);
-  const currentFolder = organization?.folders.find((folder) => `folder:${folder.id}` === convoTab);
+  const inboxConversations = organizedConversations(
+    conversations,
+    organization,
+    "all",
+  );
+  const unreadConversations = inboxConversations.filter(
+    (conversation) => Number(conversation.unread_count) > 0,
+  );
+  const visibleConversations =
+    convoTab === "unread"
+      ? unreadConversations
+      : organizedConversations(conversations, organization, convoTab);
+  const currentFolder = organization?.folders.find(
+    (folder) => `folder:${folder.id}` === convoTab,
+  );
 
   useEffect(() => {
-    if (organization?.ready && convoTab.startsWith("folder:") && !currentFolder) setConvoTab("all");
+    if (organization?.ready && convoTab.startsWith("folder:") && !currentFolder)
+      setConvoTab("all");
   }, [organization?.ready, convoTab, currentFolder, setConvoTab]);
 
   useEffect(() => {
@@ -203,7 +220,7 @@ export default function ConversationList({
                 </svg>
                 <input
                   type="text"
-                  placeholder="Search user profile..."
+                  placeholder="Search people, chats, messages..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="ht-search-pill"
@@ -219,7 +236,9 @@ export default function ConversationList({
             {/* Pinned Conversations Section (Rendered ABOVE Category Tabs) */}
             {!searchQuery.trim() &&
               (() => {
-                const pinnedList = visibleConversations.filter((c) => isConvPinned(c));
+                const pinnedList = visibleConversations.filter((c) =>
+                  isConvPinned(c),
+                );
                 if (pinnedList.length === 0) return null;
 
                 return (
@@ -450,7 +469,8 @@ export default function ConversationList({
                                   minWidth: 0,
                                 }}
                               >
-                                {!drafts[c.id]?.trim() && !isTyping &&
+                                {!drafts[c.id]?.trim() &&
+                                  !isTyping &&
                                   c.last_message &&
                                   c.last_message.sender_id === user.userId &&
                                   renderMessageStatus(
@@ -466,13 +486,13 @@ export default function ConversationList({
                                   {drafts[c.id]?.trim()
                                     ? `Draft: ${drafts[c.id]}`
                                     : isTyping
-                                    ? "typing..."
-                                    : isSaved
-                                      ? "Personal notes cloud inbox"
-                                      : c.last_message_content ||
-                                        (isGroup
-                                          ? `${c.participants?.length || 0} members`
-                                          : "No messages yet")}
+                                      ? "typing..."
+                                      : isSaved
+                                        ? "Personal notes cloud inbox"
+                                        : c.last_message_content ||
+                                          (isGroup
+                                            ? `${c.participants?.length || 0} members`
+                                            : "No messages yet")}
                                 </span>
                               </p>
                               {c.unread_count > 0 && (
@@ -553,14 +573,26 @@ export default function ConversationList({
                     aria-label="Unread conversations"
                     onClick={() => setConvoTab("unread")}
                     style={{
-                      flex: 1, minWidth: "max-content", border: "none", borderRadius: 8,
-                      padding: "6px 8px", fontSize: 12, fontWeight: 800,
-                      background: convoTab === "unread" ? "rgba(56, 189, 248, 0.15)" : "transparent",
+                      flex: 1,
+                      minWidth: "max-content",
+                      border: "none",
+                      borderRadius: 8,
+                      padding: "6px 8px",
+                      fontSize: 12,
+                      fontWeight: 800,
+                      background:
+                        convoTab === "unread"
+                          ? "rgba(56, 189, 248, 0.15)"
+                          : "transparent",
                       color: convoTab === "unread" ? t.accent : t.textMuted,
-                      cursor: "pointer", whiteSpace: "nowrap",
+                      cursor: "pointer",
+                      whiteSpace: "nowrap",
                     }}
                   >
-                    Unread{unreadConversations.length > 0 ? ` (${unreadConversations.length})` : ""}
+                    Unread
+                    {unreadConversations.length > 0
+                      ? ` (${unreadConversations.length})`
+                      : ""}
                   </button>
                   <button
                     type="button"
@@ -614,11 +646,49 @@ export default function ConversationList({
             })()}
           </div>
 
-          {organization && <OrganizationControls organization={organization} conversations={conversations} view={convoTab} onViewChange={setConvoTab} themeTokens={t} />}
+          {organization && (
+            <OrganizationControls
+              organization={organization}
+              conversations={conversations}
+              view={convoTab}
+              onViewChange={setConvoTab}
+              themeTokens={t}
+            />
+          )}
           <div className="ht-convo-list">
-            {!searchQuery.trim() && <LoadFeedback error={conversationError} loading={conversationsLoading && (!conversations.length || Boolean(conversationError))} label="Conversations" onRetry={onRetryConversations} themeTokens={t} />}
+            {searchQuery.trim() && messageSearch && (
+              <MessageSearchResults
+                query={searchQuery}
+                conversations={conversations}
+                search={messageSearch}
+                filters={searchFilters}
+                setFilters={setSearchFilters}
+                onConversation={handleSelectConversation}
+                onMessage={onMessageSearchResult}
+                themeTokens={t}
+                user={user}
+              />
+            )}
+            {!searchQuery.trim() && (
+              <LoadFeedback
+                error={conversationError}
+                loading={
+                  conversationsLoading &&
+                  (!conversations.length || Boolean(conversationError))
+                }
+                label="Conversations"
+                onRetry={onRetryConversations}
+                themeTokens={t}
+              />
+            )}
             {searchQuery.trim() && searchError ? (
-              <LoadFeedback error={searchError} loading={isSearching} label="Search" onRetry={onRetrySearch} themeTokens={t} />
+              <LoadFeedback
+                error={searchError}
+                loading={isSearching}
+                label="Search"
+                onRetry={onRetrySearch}
+                themeTokens={t}
+              />
             ) : isSearching ? (
               <div
                 style={{
@@ -628,7 +698,7 @@ export default function ConversationList({
                   color: t.textMuted,
                 }}
               >
-                Scanning database profiles...
+                Searching people...
               </div>
             ) : searchQuery.trim() ? (
               <>
@@ -636,7 +706,7 @@ export default function ConversationList({
                   className="ht-section-label"
                   style={{ color: t.textMuted }}
                 >
-                  Directory matches
+                  People
                 </div>
                 {searchResults.map((userItem) => (
                   <div
@@ -694,7 +764,7 @@ export default function ConversationList({
                       fontSize: 12,
                     }}
                   >
-                    No matching nodes.
+                    No matching people.
                   </div>
                 )}
               </>
@@ -899,7 +969,8 @@ export default function ConversationList({
                                 flex: 1,
                               }}
                             >
-                              {!drafts[c.id]?.trim() && !isTyping &&
+                              {!drafts[c.id]?.trim() &&
+                                !isTyping &&
                                 c.last_message &&
                                 c.last_message.sender_id === user.userId &&
                                 renderMessageStatus(
@@ -915,9 +986,9 @@ export default function ConversationList({
                                 {drafts[c.id]?.trim()
                                   ? `Draft: ${drafts[c.id]}`
                                   : isTyping
-                                  ? "typing..."
-                                  : c.last_message_content ||
-                                    `${c.participants?.length || 0} members`}
+                                    ? "typing..."
+                                    : c.last_message_content ||
+                                      `${c.participants?.length || 0} members`}
                               </span>
                             </p>
                             {c.unread_count > 0 && (
@@ -941,19 +1012,21 @@ export default function ConversationList({
                       </div>
                     );
                   })}
-                {visibleConversations.filter((c) => c.type === "group").length ===
-                  0 && !conversationError && !conversationsLoading && (
-                  <div
-                    style={{
-                      textAlign: "center",
-                      padding: "30px 10px",
-                      color: t.textMuted,
-                      fontSize: 12,
-                    }}
-                  >
-                    No group chats.
-                  </div>
-                )}
+                {visibleConversations.filter((c) => c.type === "group")
+                  .length === 0 &&
+                  !conversationError &&
+                  !conversationsLoading && (
+                    <div
+                      style={{
+                        textAlign: "center",
+                        padding: "30px 10px",
+                        color: t.textMuted,
+                        fontSize: 12,
+                      }}
+                    >
+                      No group chats.
+                    </div>
+                  )}
               </>
             ) : (
               <>
@@ -969,7 +1042,11 @@ export default function ConversationList({
                     gap: 5,
                   }}
                 >
-                  {convoTab === "unread" ? "Unread Conversations" : convoTab === "archived" ? "Archived Conversations" : currentFolder?.name || "All Messages"}
+                  {convoTab === "unread"
+                    ? "Unread Conversations"
+                    : convoTab === "archived"
+                      ? "Archived Conversations"
+                      : currentFolder?.name || "All Messages"}
                 </div>
                 {visibleConversations.map((c) => {
                   const isActive = activeConv && activeConv.id === c.id;
@@ -1181,7 +1258,8 @@ export default function ConversationList({
                               flex: 1,
                             }}
                           >
-                            {!drafts[c.id]?.trim() && !isTyping &&
+                            {!drafts[c.id]?.trim() &&
+                              !isTyping &&
                               c.last_message &&
                               c.last_message.sender_id === user.userId &&
                               renderMessageStatus(c.last_message.status, true)}
@@ -1194,13 +1272,13 @@ export default function ConversationList({
                               {drafts[c.id]?.trim()
                                 ? `Draft: ${drafts[c.id]}`
                                 : isTyping
-                                ? "typing..."
-                                : isSaved
-                                  ? "Personal notes cloud inbox"
-                                  : c.last_message_content ||
-                                    (isGroup
-                                      ? `${c.participants?.length || 0} members`
-                                      : "No messages yet")}
+                                  ? "typing..."
+                                  : isSaved
+                                    ? "Personal notes cloud inbox"
+                                    : c.last_message_content ||
+                                      (isGroup
+                                        ? `${c.participants?.length || 0} members`
+                                        : "No messages yet")}
                             </span>
                           </p>
                           {c.unread_count > 0 && (
@@ -1224,18 +1302,26 @@ export default function ConversationList({
                     </div>
                   );
                 })}
-                {visibleConversations.length === 0 && !conversationError && !conversationsLoading && (
-                  <div
-                    style={{
-                      textAlign: "center",
-                      padding: "30px 10px",
-                      color: t.textMuted,
-                      fontSize: 11,
-                    }}
-                  >
-                    {convoTab === "unread" ? "All caught up." : convoTab === "archived" ? "No archived conversations." : currentFolder ? "No conversations in this folder." : "No messages yet."}
-                  </div>
-                )}
+                {visibleConversations.length === 0 &&
+                  !conversationError &&
+                  !conversationsLoading && (
+                    <div
+                      style={{
+                        textAlign: "center",
+                        padding: "30px 10px",
+                        color: t.textMuted,
+                        fontSize: 11,
+                      }}
+                    >
+                      {convoTab === "unread"
+                        ? "All caught up."
+                        : convoTab === "archived"
+                          ? "No archived conversations."
+                          : currentFolder
+                            ? "No conversations in this folder."
+                            : "No messages yet."}
+                    </div>
+                  )}
               </>
             )}
           </div>

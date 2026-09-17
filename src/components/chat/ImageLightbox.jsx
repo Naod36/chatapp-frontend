@@ -115,7 +115,10 @@ export default function ImageLightbox({
     const touch = e.changedTouches[0];
     const deltaX = touch.clientX - touchRef.current.startX;
     const deltaY = touch.clientY - touchRef.current.startY;
-    if (Math.abs(deltaX) > SWIPE_THRESHOLD && Math.abs(deltaX) > Math.abs(deltaY)) {
+    if (
+      Math.abs(deltaX) > SWIPE_THRESHOLD &&
+      Math.abs(deltaX) > Math.abs(deltaY)
+    ) {
       if (deltaX > 0) goPrev();
       else goNext();
     }
@@ -159,10 +162,26 @@ export default function ImageLightbox({
           e.stopPropagation();
           onClose();
         }}
-        style={{ ...controlButtonStyle, position: "absolute", top: 20, right: 20 }}
+        style={{
+          ...controlButtonStyle,
+          position: "absolute",
+          top: 20,
+          right: 20,
+        }}
       >
-        <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+        <svg
+          width="18"
+          height="18"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          viewBox="0 0 24 24"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M6 18L18 6M6 6l12 12"
+          />
         </svg>
       </button>
 
@@ -196,8 +215,19 @@ export default function ImageLightbox({
           }}
           style={{ ...controlButtonStyle, position: "absolute", left: 20 }}
         >
-          <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+          <svg
+            width="20"
+            height="20"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M15 19l-7-7 7-7"
+            />
           </svg>
         </button>
       )}
@@ -213,8 +243,19 @@ export default function ImageLightbox({
           }}
           style={{ ...controlButtonStyle, position: "absolute", right: 20 }}
         >
-          <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+          <svg
+            width="20"
+            height="20"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M9 5l7 7-7 7"
+            />
           </svg>
         </button>
       )}
@@ -279,7 +320,15 @@ export default function ImageLightbox({
         >
           −
         </button>
-        <span style={{ color: "#fff", fontSize: 12, fontWeight: 600, minWidth: 40, textAlign: "center" }}>
+        <span
+          style={{
+            color: "#fff",
+            fontSize: 12,
+            fontWeight: 600,
+            minWidth: 40,
+            textAlign: "center",
+          }}
+        >
           {Math.round(zoom * 100)}%
         </span>
         <button

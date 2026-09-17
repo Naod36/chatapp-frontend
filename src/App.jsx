@@ -4,14 +4,19 @@ import ChatDashboard from "./components/ChatDashboard";
 import MobileAppGate from "./components/MobileAppGate";
 import { authService } from "./services/auth";
 import { apiFetch } from "./services/api";
-import { SESSION_EXPIRED_EVENT, SESSION_EXPIRED_MESSAGE } from "./services/session.js";
+import {
+  SESSION_EXPIRED_EVENT,
+  SESSION_EXPIRED_MESSAGE,
+} from "./services/session.js";
 import { isMobileDevice } from "./utils/device";
 
 const MOBILE_CONTINUE_KEY = "flowchat_continue_on_mobile";
 
 function App() {
   const [user, setUser] = useState(null);
-  const [checkingSession, setCheckingSession] = useState(authService.isAuthenticated);
+  const [checkingSession, setCheckingSession] = useState(
+    authService.isAuthenticated,
+  );
   const [sessionMessage, setSessionMessage] = useState(null);
   const [resetToken] = useState(() =>
     new URLSearchParams(window.location.search).get("reset_token"),
@@ -74,7 +79,11 @@ function App() {
   }
 
   if (checkingSession) {
-    return <div role="status" style={{ padding: 24 }}>Restoring session...</div>;
+    return (
+      <div role="status" style={{ padding: 24 }}>
+        Restoring session...
+      </div>
+    );
   }
 
   if (!user) {
