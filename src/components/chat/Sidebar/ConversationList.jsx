@@ -60,6 +60,24 @@ export default function ConversationList({
 }) {
   const [latestRelease, setLatestRelease] = useState(null);
   const [isLoadingRelease, setIsLoadingRelease] = useState(false);
+  const [menuRequest, setMenuRequest] = useState(null);
+  const openConversationMenu = (event, conversation, fromButton = false) => {
+    if (!organization) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const trigger = event.currentTarget;
+    const bounds = trigger.getBoundingClientRect();
+    setMenuRequest({ conversationId: conversation.id, x: fromButton ? bounds.left : event.clientX, y: fromButton ? bounds.bottom : event.clientY, trigger });
+  };
+  const rowKeys = (event, conversation) => {
+    if (event.target !== event.currentTarget) return;
+    if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) openConversationMenu(event, conversation, true);
+    else if (event.key === "Enter") handleSelectConversation(conversation);
+  };
+  const optionsButton = (conversation) => organization && <button type="button" className="ht-conversation-options" aria-label={`Options for ${conversation.display_name || conversation.title || "conversation"}`} title="Conversation options" onClick={(event) => openConversationMenu(event, conversation, true)}>
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="12" cy="19" r="1.8" /></svg>
+  </button>;
+  useEffect(() => { setMenuRequest(null); }, [convoTab, searchQuery, activeRailTab, user?.token]);
   const inboxConversations = organizedConversations(
     conversations,
     organization,
@@ -281,6 +299,10 @@ export default function ConversationList({
                       return (
                         <div
                           key={c.id}
+                          className="ht-conversation-row"
+                          tabIndex={0}
+                          onContextMenu={(event) => openConversationMenu(event, c)}
+                          onKeyDown={(event) => rowKeys(event, c)}
                           onClick={() => handleSelectConversation(c)}
                           style={{
                             display: "flex",
@@ -303,6 +325,7 @@ export default function ConversationList({
                             transition: "all 0.2s ease",
                           }}
                         >
+                          {optionsButton(c)}
                           <div
                             style={{
                               width: 38,
@@ -521,7 +544,7 @@ export default function ConversationList({
               })()}
 
             {/* Category Filter Tabs (All Messages / Groups) */}
-            {(() => {
+            {!organization && (() => {
               const groupUnreadTotal = inboxConversations
                 .filter((c) => c.type === "group")
                 .reduce((acc, c) => acc + (c.unread_count || 0), 0);
@@ -653,6 +676,9 @@ export default function ConversationList({
               view={convoTab}
               onViewChange={setConvoTab}
               themeTokens={t}
+              theme={theme}
+              menuRequest={menuRequest}
+              onCloseMenu={() => setMenuRequest(null)}
             />
           )}
           <div className="ht-convo-list">
@@ -816,6 +842,10 @@ export default function ConversationList({
                     return (
                       <div
                         key={c.id}
+                        className="ht-conversation-row"
+                        tabIndex={0}
+                        onContextMenu={(event) => openConversationMenu(event, c)}
+                        onKeyDown={(event) => rowKeys(event, c)}
                         onClick={() => handleSelectConversation(c)}
                         style={{
                           display: "flex",
@@ -833,6 +863,7 @@ export default function ConversationList({
                             : "1px solid transparent",
                         }}
                       >
+                        {optionsButton(c)}
                         <div
                           style={{
                             width: 40,
@@ -1075,6 +1106,10 @@ export default function ConversationList({
                   return (
                     <div
                       key={c.id}
+                      className="ht-conversation-row"
+                      tabIndex={0}
+                      onContextMenu={(event) => openConversationMenu(event, c)}
+                      onKeyDown={(event) => rowKeys(event, c)}
                       onClick={() => handleSelectConversation(c)}
                       style={{
                         display: "flex",
@@ -1092,6 +1127,7 @@ export default function ConversationList({
                           : "1px solid transparent",
                       }}
                     >
+                      {optionsButton(c)}
                       <div
                         style={{
                           width: 40,

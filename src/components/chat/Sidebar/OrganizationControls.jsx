@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import LoadFeedback from "../../LoadFeedback";
+import CollectionTabs from "./CollectionTabs";
+import ConversationOrganizationMenu from "./ConversationOrganizationMenu";
 
 export default function OrganizationControls({
   organization,
@@ -8,6 +10,9 @@ export default function OrganizationControls({
   view,
   onViewChange,
   themeTokens: t,
+  theme = "light",
+  menuRequest = null,
+  onCloseMenu = () => {},
 }) {
   const [open, setOpen] = useState(false);
   const [folderId, setFolderId] = useState("");
@@ -17,6 +22,8 @@ export default function OrganizationControls({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const dialogRef = useRef(null);
   const triggerRef = useRef(null);
+  const nameRef = useRef(null);
+  const focusNameRef = useRef(false);
   const folder = organization.folders.find((item) => item.id === folderId);
   const disabled = !organization.ready || organization.pending;
   const archived = new Set(organization.archived_ids);
@@ -25,6 +32,7 @@ export default function OrganizationControls({
     if (!open) return;
     const dialog = dialogRef.current;
     dialog.showModal();
+    if (focusNameRef.current) nameRef.current?.focus();
     return () => {
       dialog.close();
       triggerRef.current?.focus();
@@ -47,6 +55,16 @@ export default function OrganizationControls({
   );
   const label = (conversation) =>
     conversation.display_name || conversation.title || "Conversation";
+  const inbox = conversations.filter((conversation) => !archived.has(conversation.id));
+  const unread = inbox.filter((conversation) => Number(conversation.unread_count) > 0).length;
+  const groupUnread = inbox.filter((conversation) => conversation.type === "group").reduce((total, conversation) => total + Number(conversation.unread_count || 0), 0);
+  const collectionItems = [
+    { value: "all", label: "All Messages" },
+    { value: "unread", label: `Unread${unread ? ` (${unread})` : ""}`, ariaLabel: "Unread conversations" },
+    { value: "groups", label: `Groups${groupUnread ? ` (${groupUnread})` : ""}`, ariaLabel: "Group conversations" },
+    { value: "archived", label: `Archive (${organization.archived_ids.length})`, ariaLabel: "Archived conversations" },
+    ...organization.folders.map((item) => ({ value: `folder:${item.id}`, label: item.name })),
+  ];
 
   return (
     <>
@@ -54,37 +72,18 @@ export default function OrganizationControls({
         className="ht-organization-toolbar"
         style={{ color: t.text, borderBottom: t.border }}
       >
-        <select
-          aria-label="Conversation collection"
-          value={
-            view === "archived" || view.startsWith("folder:") ? view : "inbox"
-          }
-          onChange={(event) =>
-            onViewChange(
-              event.target.value === "inbox" ? "all" : event.target.value,
-            )
-          }
-        >
-          <option value="inbox">Inbox</option>
-          <option value="archived">
-            Archived ({organization.archived_ids.length})
-          </option>
-          {organization.folders.map((item) => (
-            <option key={item.id} value={`folder:${item.id}`}>
-              {item.name}
-            </option>
-          ))}
-        </select>
-        <button type="button" ref={triggerRef} onClick={() => setOpen(true)}>
-          Organize
+        <CollectionTabs items={collectionItems} value={view} onChange={onViewChange} />
+        <button type="button" ref={triggerRef} className="ht-organize-button" aria-label="Manage folders" title="Manage folders" onClick={() => { focusNameRef.current = false; setOpen(true); }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M3 6h7l2 2h9v12H3zM12 11v6M9 14h6" /></svg>
         </button>
       </div>
+      {menuRequest && !open && <ConversationOrganizationMenu request={menuRequest} conversation={conversations.find((conversation) => conversation.id === menuRequest.conversationId)} organization={organization} theme={theme} themeTokens={t} onClose={onCloseMenu} onCreate={() => { focusNameRef.current = true; setFolderId(""); setOpen(true); onCloseMenu(); }} />}
       {!open && feedback}
       {open &&
         createPortal(
           <dialog
             ref={dialogRef}
-            className="ht-organization-dialog"
+            className={`ht-organization-dialog ht-${theme}-theme`}
             aria-labelledby="organization-title"
             onCancel={(event) => {
               event.preventDefault();
@@ -126,6 +125,7 @@ export default function OrganizationControls({
                 }}
               >
                 <input
+                  ref={nameRef}
                   aria-label="New folder name"
                   placeholder="New folder name"
                   value={newName}
@@ -138,21 +138,7 @@ export default function OrganizationControls({
                   Create Folder
                 </button>
               </form>
-              <label className="ht-organization-field">
-                Folder
-                <select
-                  aria-label="Manage folder"
-                  value={folder ? folderId : ""}
-                  onChange={(event) => setFolderId(event.target.value)}
-                >
-                  <option value="">Archives</option>
-                  {organization.folders.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <CollectionTabs label="Manage folder" items={[{ value: "", label: "Archives" }, ...organization.folders.map((item) => ({ value: item.id, label: item.name }))]} value={folder ? folderId : ""} onChange={setFolderId} />
               {folder && (
                 <>
                   <form
