@@ -30,10 +30,20 @@ test("ImageLightbox: navigation, keyboard, zoom reset and dismissal", async () =
     const { default: ImageLightbox } = await server.ssrLoadModule(
       "/src/components/chat/ImageLightbox.jsx",
     );
+    const { imageDownloads } = await server.ssrLoadModule(
+      "/src/services/imageDownloads.js",
+    );
+    let downloaded;
+    let failDownload = true;
+    imageDownloads.download = async (image) => {
+      if (failDownload) throw new Error("offline");
+      downloaded = image.id;
+    };
+    let jumped;
     const images = [
       { id: "a", src: "/img-a.jpg", caption: "First" },
       { id: "b", src: "/img-b.jpg", caption: "Second" },
-      { id: "c", src: "/img-c.jpg", caption: "Third" },
+      { id: "c", src: "/img-c.jpg", caption: "Third", canJump: false },
     ];
     let closedCount = 0;
     const onClose = () => {
@@ -57,18 +67,62 @@ test("ImageLightbox: navigation, keyboard, zoom reset and dismissal", async () =
     const imgByAlt = (caption) =>
       document.querySelector(`img[alt="${caption}"]`);
 
+    const opener = document.createElement("button");
+    opener.textContent = "Open attachment";
+    document.body.append(opener);
+    opener.focus();
+
     await flush(() =>
       root.render(
         React.createElement(ImageLightbox, {
           images,
           startIndex: 1,
           onClose,
+          onJumpToMessage: (image) => {
+            jumped = image.id;
+          },
           t: {},
         }),
       ),
     );
 
     assert.equal(counterText(), "2 / 3", "opens at the requested start index");
+    assert.equal(dialog().getAttribute("aria-modal"), "true");
+    assert.equal(
+      document.activeElement.getAttribute("aria-label"),
+      "Close lightbox",
+    );
+    assert.equal(document.body.style.overflow, "hidden");
+    await flush(() =>
+      imgByAlt("Second").dispatchEvent(new window.Event("error")),
+    );
+    assert.match(dialog().textContent, /Could not load this image/);
+    await click(
+      [...dialog().querySelectorAll("button")].find(
+        (button) => button.textContent === "Retry image",
+      ),
+    );
+    await flush(() =>
+      imgByAlt("Second").dispatchEvent(new window.Event("load")),
+    );
+    assert.equal(dialog().querySelector('[role="alert"]'), null);
+    await click(document.querySelector('[aria-label="Download image"]'));
+    assert.match(dialog().textContent, /Download failed/);
+    failDownload = false;
+    await click(document.querySelector('[aria-label="Download image"]'));
+    assert.equal(downloaded, "b");
+    assert.doesNotMatch(dialog().textContent, /Download failed/);
+    await click(document.querySelector('[aria-label="Jump to message"]'));
+    assert.equal(jumped, "b");
+    await flush(() =>
+      window.dispatchEvent(
+        new window.KeyboardEvent("keydown", { key: "Tab", shiftKey: true }),
+      ),
+    );
+    assert.ok(
+      dialog().contains(document.activeElement),
+      "keyboard focus remains inside the modal",
+    );
 
     await click(document.querySelector('[aria-label="Next image"]'));
     assert.equal(counterText(), "3 / 3");
@@ -98,6 +152,24 @@ test("ImageLightbox: navigation, keyboard, zoom reset and dismissal", async () =
       ),
     );
     assert.equal(counterText(), "3 / 3", "right arrow key navigates forward");
+    assert.equal(
+      document.querySelector('[aria-label="Jump to message"]'),
+      null,
+      "unconfirmed images cannot jump to server history",
+    );
+    let downloadSignal;
+    imageDownloads.download = (_image, signal) =>
+      new Promise((_resolve, reject) => {
+        downloadSignal = signal;
+        signal.addEventListener("abort", () => reject(new Error("aborted")), {
+          once: true,
+        });
+      });
+    await click(document.querySelector('[aria-label="Download image"]'));
+    assert.equal(
+      document.querySelector('[aria-label="Download image"]').disabled,
+      true,
+    );
 
     // Zoom in via double click, then confirm navigating away resets it.
     await flush(() =>
@@ -120,6 +192,12 @@ test("ImageLightbox: navigation, keyboard, zoom reset and dismissal", async () =
       /scale\(1\)/,
       "zoom resets after navigating to a new image",
     );
+    assert.equal(
+      downloadSignal.aborted,
+      true,
+      "navigation cancels the previous image download",
+    );
+    assert.doesNotMatch(dialog().textContent, /Download failed|Downloading/);
 
     // Zoom +/- controls.
     await click(document.querySelector('[aria-label="Zoom in"]'));
@@ -154,6 +232,12 @@ test("ImageLightbox: navigation, keyboard, zoom reset and dismissal", async () =
 
     // Listeners must be removed on unmount.
     await flush(() => root.unmount());
+    assert.equal(
+      document.activeElement,
+      opener,
+      "closing restores focus without scrolling the chat",
+    );
+    assert.equal(document.body.style.overflow, "");
     closedCount = 0;
     window.dispatchEvent(
       new window.KeyboardEvent("keydown", { key: "Escape" }),
@@ -279,7 +363,11 @@ test("ChatDashboard: image click opens lightbox at the right index and multi-ima
         last_message: { ...textMsg },
       },
     ];
-    conversationService.getMessages = async () => [img1, textMsg, img2, img3];
+    const historyTargets = [];
+    conversationService.getMessages = async (_conversation, around) => {
+      historyTargets.push(around);
+      return [img1, textMsg, img2, img3];
+    };
     conversationService.getPinnedMessages = async () => [];
     conversationService.sendMessage = async (conversationId, payload) => ({
       message_id: payload.client_message_id,
@@ -358,6 +446,8 @@ test("ChatDashboard: image click opens lightbox at the right index and multi-ima
       );
     assert.equal(thumbnails().length, 3, "three image messages rendered");
     const secondThumb = thumbnails().find((el) => el.src.includes("img-2"));
+    const stream = document.querySelector(".ht-message-stream");
+    stream.scrollTop = 123;
     await click(secondThumb);
     assert.ok(dialog(), "lightbox opens on image click");
     assert.equal(
@@ -391,6 +481,55 @@ test("ChatDashboard: image click opens lightbox at the right index and multi-ima
       ),
     );
     assert.equal(dialog(), null, "Escape closes the lightbox");
+    assert.equal(document.activeElement, secondThumb);
+    assert.equal(
+      stream.scrollTop,
+      123,
+      "opening and closing does not move the reading position",
+    );
+
+    if (!document.querySelector('[aria-label="Open shared image"]'))
+      await click(
+        document.querySelector('[title="Toggle Conversation Inspector"]'),
+      );
+    const sharedThumb = [
+      ...document.querySelectorAll('[aria-label="Open shared image"]'),
+    ].find((image) => image.src.includes("img-2"));
+    sharedThumb.focus();
+    await flush(() =>
+      sharedThumb.dispatchEvent(
+        new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+      ),
+    );
+    assert.equal(
+      counterText(),
+      "2 / 3",
+      "shared media uses the in-app viewer at the selected image",
+    );
+    await flush(() =>
+      window.dispatchEvent(
+        new window.KeyboardEvent("keydown", { key: "Escape" }),
+      ),
+    );
+    assert.equal(
+      document.activeElement,
+      sharedThumb,
+      "closing returns focus to the shared thumbnail",
+    );
+    await click(sharedThumb);
+    await click(document.querySelector('[aria-label="Jump to message"]'));
+    assert.equal(dialog(), null);
+    assert.equal(historyTargets.at(-1), "img2");
+    assert.ok(
+      document
+        .getElementById("msg-img2")
+        .classList.contains("ht-search-highlight"),
+    );
+    await click(
+      [...document.querySelectorAll("button")].find(
+        (button) => button.textContent === "Latest messages",
+      ),
+    );
 
     // (d) zoom resets when navigating (isolated unit test covers this directly against
     // ImageLightbox; re-open here and confirm state starts fresh each time).

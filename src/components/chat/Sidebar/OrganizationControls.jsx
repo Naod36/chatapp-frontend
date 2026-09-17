@@ -55,15 +55,39 @@ export default function OrganizationControls({
   );
   const label = (conversation) =>
     conversation.display_name || conversation.title || "Conversation";
-  const inbox = conversations.filter((conversation) => !archived.has(conversation.id));
-  const unread = inbox.filter((conversation) => Number(conversation.unread_count) > 0).length;
-  const groupUnread = inbox.filter((conversation) => conversation.type === "group").reduce((total, conversation) => total + Number(conversation.unread_count || 0), 0);
+  const inbox = conversations.filter(
+    (conversation) => !archived.has(conversation.id),
+  );
+  const unread = inbox.filter(
+    (conversation) => Number(conversation.unread_count) > 0,
+  ).length;
+  const groupUnread = inbox
+    .filter((conversation) => conversation.type === "group")
+    .reduce(
+      (total, conversation) => total + Number(conversation.unread_count || 0),
+      0,
+    );
   const collectionItems = [
     { value: "all", label: "All Messages" },
-    { value: "unread", label: `Unread${unread ? ` (${unread})` : ""}`, ariaLabel: "Unread conversations" },
-    { value: "groups", label: `Groups${groupUnread ? ` (${groupUnread})` : ""}`, ariaLabel: "Group conversations" },
-    { value: "archived", label: `Archive (${organization.archived_ids.length})`, ariaLabel: "Archived conversations" },
-    ...organization.folders.map((item) => ({ value: `folder:${item.id}`, label: item.name })),
+    {
+      value: "unread",
+      label: `Unread${unread ? ` (${unread})` : ""}`,
+      ariaLabel: "Unread conversations",
+    },
+    {
+      value: "groups",
+      label: `Groups${groupUnread ? ` (${groupUnread})` : ""}`,
+      ariaLabel: "Group conversations",
+    },
+    {
+      value: "archived",
+      label: `Archive (${organization.archived_ids.length})`,
+      ariaLabel: "Archived conversations",
+    },
+    ...organization.folders.map((item) => ({
+      value: `folder:${item.id}`,
+      label: item.name,
+    })),
   ];
 
   return (
@@ -72,12 +96,53 @@ export default function OrganizationControls({
         className="ht-organization-toolbar"
         style={{ color: t.text, borderBottom: t.border }}
       >
-        <CollectionTabs items={collectionItems} value={view} onChange={onViewChange} />
-        <button type="button" ref={triggerRef} className="ht-organize-button" aria-label="Manage folders" title="Manage folders" onClick={() => { focusNameRef.current = false; setOpen(true); }}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M3 6h7l2 2h9v12H3zM12 11v6M9 14h6" /></svg>
+        <CollectionTabs
+          items={collectionItems}
+          value={view}
+          onChange={onViewChange}
+        />
+        <button
+          type="button"
+          ref={triggerRef}
+          className="ht-organize-button"
+          aria-label="Manage folders"
+          title="Manage folders"
+          onClick={() => {
+            focusNameRef.current = false;
+            setOpen(true);
+          }}
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            aria-hidden="true"
+          >
+            <path d="M3 6h7l2 2h9v12H3zM12 11v6M9 14h6" />
+          </svg>
         </button>
       </div>
-      {menuRequest && !open && <ConversationOrganizationMenu request={menuRequest} conversation={conversations.find((conversation) => conversation.id === menuRequest.conversationId)} organization={organization} theme={theme} themeTokens={t} onClose={onCloseMenu} onCreate={() => { focusNameRef.current = true; setFolderId(""); setOpen(true); onCloseMenu(); }} />}
+      {menuRequest && !open && (
+        <ConversationOrganizationMenu
+          request={menuRequest}
+          conversation={conversations.find(
+            (conversation) => conversation.id === menuRequest.conversationId,
+          )}
+          organization={organization}
+          theme={theme}
+          themeTokens={t}
+          onClose={onCloseMenu}
+          onCreate={() => {
+            focusNameRef.current = true;
+            setFolderId("");
+            setOpen(true);
+            onCloseMenu();
+          }}
+        />
+      )}
       {!open && feedback}
       {open &&
         createPortal(
@@ -138,7 +203,18 @@ export default function OrganizationControls({
                   Create Folder
                 </button>
               </form>
-              <CollectionTabs label="Manage folder" items={[{ value: "", label: "Archives" }, ...organization.folders.map((item) => ({ value: item.id, label: item.name }))]} value={folder ? folderId : ""} onChange={setFolderId} />
+              <CollectionTabs
+                label="Manage folder"
+                items={[
+                  { value: "", label: "Archives" },
+                  ...organization.folders.map((item) => ({
+                    value: item.id,
+                    label: item.name,
+                  })),
+                ]}
+                value={folder ? folderId : ""}
+                onChange={setFolderId}
+              />
               {folder && (
                 <>
                   <form

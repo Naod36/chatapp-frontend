@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { imageDownloads } from "../../services/imageDownloads.js";
 
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 4;
@@ -18,21 +20,77 @@ export default function ImageLightbox({
   images,
   startIndex = 0,
   onClose,
-  t = {},
+  onJumpToMessage,
 }) {
   const [index, setIndex] = useState(startIndex);
   const [zoom, setZoom] = useState(MIN_ZOOM);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [imageState, setImageState] = useState("loading");
+  const [imageAttempt, setImageAttempt] = useState(0);
+  const [downloadState, setDownloadState] = useState({
+    pending: false,
+    error: null,
+  });
+  const downloadRef = useRef(null);
+  const dialogRef = useRef(null);
   const dragRef = useRef(null); // { startX, startY, panX, panY }
   const touchRef = useRef(null); // { startX, startY, lastTap }
   const total = images.length;
-  const current = images[index];
+  const current = images[Math.min(index, Math.max(0, total - 1))];
+
+  useEffect(() => {
+    if (!dialogRef.current) return;
+    const previousFocus = document.activeElement;
+    const previousOverflow = document.body.style.overflow;
+    const siblings = [...document.body.children].filter(
+      (element) => element !== dialogRef.current,
+    );
+    const previousInert = siblings.map((element) => [element, element.inert]);
+    for (const element of siblings) element.inert = true;
+    document.body.style.overflow = "hidden";
+    dialogRef.current?.querySelector("button")?.focus({ preventScroll: true });
+    return () => {
+      downloadRef.current?.abort();
+      downloadRef.current = null;
+      document.body.style.overflow = previousOverflow;
+      for (const [element, inert] of previousInert) element.inert = inert;
+      if (previousFocus?.isConnected)
+        previousFocus.focus({ preventScroll: true });
+    };
+  }, []);
 
   // Reset zoom/pan whenever the shown image changes.
   useEffect(() => {
     setZoom(MIN_ZOOM);
     setPan({ x: 0, y: 0 });
-  }, [index]);
+    setImageState("loading");
+    downloadRef.current?.abort();
+    downloadRef.current = null;
+    setDownloadState({ pending: false, error: null });
+  }, [current?.id, current?.src]);
+
+  const download = async () => {
+    if (downloadRef.current) return;
+    const controller = new AbortController();
+    downloadRef.current = controller;
+    setDownloadState({ pending: true, error: null });
+    const timeout = setTimeout(() => controller.abort(), 30000);
+    try {
+      await imageDownloads.download(current, controller.signal);
+      if (downloadRef.current === controller)
+        setDownloadState({ pending: false, error: null });
+    } catch {
+      if (downloadRef.current === controller)
+        setDownloadState({
+          pending: false,
+          error:
+            "Download failed. Try again; the image host may restrict downloads.",
+        });
+    } finally {
+      clearTimeout(timeout);
+      if (downloadRef.current === controller) downloadRef.current = null;
+    }
+  };
 
   const goTo = (nextIndex) => {
     setIndex(((nextIndex % total) + total) % total);
@@ -43,9 +101,28 @@ export default function ImageLightbox({
   // Keyboard navigation; listeners are removed on unmount so no leaks.
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (e.key === "Escape") onClose();
-      else if (e.key === "ArrowLeft") goPrev();
-      else if (e.key === "ArrowRight") goNext();
+      if (!dialogRef.current) return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+      } else if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        goPrev();
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        goNext();
+      } else if (e.key === "Tab") {
+        const controls = [
+          ...dialogRef.current.querySelectorAll(
+            "button:not(:disabled), a[href]",
+          ),
+        ];
+        const position = controls.indexOf(document.activeElement);
+        e.preventDefault();
+        controls[
+          (position + (e.shiftKey ? -1 : 1) + controls.length) % controls.length
+        ]?.focus();
+      }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
@@ -139,16 +216,19 @@ export default function ImageLightbox({
 
   if (!current) return null;
 
-  return (
+  return createPortal(
     <div
+      ref={dialogRef}
+      className="ht-image-viewer"
       role="dialog"
+      aria-modal="true"
       aria-label="Image viewer"
       onClick={onClose}
       style={{
         position: "fixed",
         inset: 0,
         background: "rgba(0, 0, 0, 0.92)",
-        zIndex: 2000,
+        zIndex: 12000,
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -213,7 +293,12 @@ export default function ImageLightbox({
             e.stopPropagation();
             goPrev();
           }}
-          style={{ ...controlButtonStyle, position: "absolute", left: 20 }}
+          style={{
+            ...controlButtonStyle,
+            position: "absolute",
+            left: 8,
+            zIndex: 2,
+          }}
         >
           <svg
             width="20"
@@ -241,7 +326,12 @@ export default function ImageLightbox({
             e.stopPropagation();
             goNext();
           }}
-          style={{ ...controlButtonStyle, position: "absolute", right: 20 }}
+          style={{
+            ...controlButtonStyle,
+            position: "absolute",
+            right: 8,
+            zIndex: 2,
+          }}
         >
           <svg
             width="20"
@@ -271,22 +361,56 @@ export default function ImageLightbox({
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
         style={{
-          maxWidth: "90vw",
-          maxHeight: "80vh",
+          width: "calc(100vw - 112px)",
+          height: "calc(100dvh - 200px)",
           overflow: "hidden",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
+          touchAction: "none",
         }}
       >
+        {imageState === "loading" && (
+          <div
+            role="status"
+            style={{
+              position: "absolute",
+              color: "#fff",
+              pointerEvents: "none",
+            }}
+          >
+            Loading image...
+          </div>
+        )}
+        {imageState === "error" && (
+          <div
+            role="alert"
+            style={{ color: "#fff", textAlign: "center", padding: 24 }}
+          >
+            <p>Could not load this image.</p>
+            <button
+              type="button"
+              onClick={() => {
+                setImageState("loading");
+                setImageAttempt((attempt) => attempt + 1);
+              }}
+            >
+              Retry image
+            </button>
+          </div>
+        )}
         <img
+          key={`${current.id}:${current.src}:${imageAttempt}`}
           src={current.src}
           alt={current.caption || "Attachment"}
           draggable={false}
           onDoubleClick={toggleDoubleZoom}
+          onLoad={() => setImageState("ready")}
+          onError={() => setImageState("error")}
           style={{
-            maxWidth: "90vw",
-            maxHeight: "80vh",
+            display: imageState === "error" ? "none" : undefined,
+            maxWidth: "100%",
+            maxHeight: "100%",
             objectFit: "contain",
             transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
             transition: dragRef.current ? "none" : "transform 0.15s ease-out",
@@ -300,23 +424,51 @@ export default function ImageLightbox({
         onClick={(e) => e.stopPropagation()}
         style={{
           position: "absolute",
-          bottom: 24,
+          bottom: 12,
           left: "50%",
           transform: "translateX(-50%)",
           display: "flex",
+          flexWrap: "wrap",
+          justifyContent: "center",
+          width: "max-content",
+          maxWidth: "calc(100vw - 44px)",
           alignItems: "center",
           gap: 10,
           background: "rgba(255, 255, 255, 0.12)",
-          borderRadius: 999,
+          borderRadius: 8,
           padding: "6px 10px",
         }}
       >
+        {downloadState.error && (
+          <div
+            role="alert"
+            style={{
+              flexBasis: "100%",
+              color: "#fff",
+              fontSize: 12,
+              textAlign: "center",
+              maxWidth: 280,
+            }}
+          >
+            {downloadState.error}
+          </div>
+        )}
         <button
           type="button"
           aria-label="Zoom out"
           title="Zoom out"
-          onClick={() => setZoom((z) => clampZoom(z - 0.5))}
-          style={{ ...controlButtonStyle, width: 32, height: 32 }}
+          disabled={zoom <= MIN_ZOOM}
+          onClick={() => {
+            const next = clampZoom(zoom - 0.5);
+            setZoom(next);
+            if (next === MIN_ZOOM) setPan({ x: 0, y: 0 });
+          }}
+          style={{
+            ...controlButtonStyle,
+            width: 32,
+            height: 32,
+            opacity: zoom <= MIN_ZOOM ? 0.4 : 1,
+          }}
         >
           −
         </button>
@@ -336,11 +488,72 @@ export default function ImageLightbox({
           aria-label="Zoom in"
           title="Zoom in"
           onClick={() => setZoom((z) => clampZoom(z + 0.5))}
-          style={{ ...controlButtonStyle, width: 32, height: 32 }}
+          disabled={zoom >= MAX_ZOOM}
+          style={{
+            ...controlButtonStyle,
+            width: 32,
+            height: 32,
+            opacity: zoom >= MAX_ZOOM ? 0.4 : 1,
+          }}
         >
           +
         </button>
+        <button
+          type="button"
+          aria-label="Download image"
+          title="Download image"
+          disabled={downloadState.pending}
+          onClick={download}
+          style={{ ...controlButtonStyle, width: 32, height: 32 }}
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            aria-hidden="true"
+          >
+            <path d="M12 3v12m-5-5 5 5 5-5M5 16v5h14v-5" />
+          </svg>
+        </button>
+        {onJumpToMessage && current.canJump !== false && (
+          <button
+            type="button"
+            aria-label="Jump to message"
+            title="Jump to message"
+            onClick={() => onJumpToMessage(current)}
+            style={{ ...controlButtonStyle, width: 32, height: 32 }}
+          >
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              aria-hidden="true"
+            >
+              <path d="M9 10h6m-6 4h4M21 11a9 9 0 0 1-9 9H4l-3 2 2-6a9 9 0 1 1 18-5Z" />
+            </svg>
+          </button>
+        )}
+        {downloadState.pending && (
+          <span
+            role="status"
+            style={{
+              color: "#fff",
+              fontSize: 12,
+              flexBasis: "100%",
+              textAlign: "center",
+            }}
+          >
+            Downloading...
+          </span>
+        )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

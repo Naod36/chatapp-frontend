@@ -188,7 +188,10 @@ test("organization confirms mutations, ignores stale responses, refreshes across
           conversations: [{ id: "chat", display_name: "Peer" }],
           view: selectedView,
           menuRequest,
-          onCloseMenu() { menuRequest = null; renderControls(); },
+          onCloseMenu() {
+            menuRequest = null;
+            renderControls();
+          },
           onViewChange(value) {
             selectedView = value;
           },
@@ -230,7 +233,11 @@ test("organization confirms mutations, ignores stale responses, refreshes across
       action: "create_folder",
       name: "Personal",
     });
-    await click(document.querySelector('[aria-label="Manage folder"] [data-value="work"]'));
+    await click(
+      document.querySelector(
+        '[aria-label="Manage folder"] [data-value="work"]',
+      ),
+    );
     await click(document.querySelector('[aria-label="Include Peer in Work"]'));
     assert.deepEqual(controlChanges.pop(), {
       action: "set_membership",
@@ -273,38 +280,86 @@ test("organization confirms mutations, ignores stale responses, refreshes across
     });
     await click(button("Close"));
     assert.equal(document.querySelector("dialog"), null);
-    assert.equal(document.activeElement, document.querySelector('[aria-label="Manage folders"]'));
-    await click(document.querySelector('[aria-label="Archived conversations"]'));
+    assert.equal(
+      document.activeElement,
+      document.querySelector('[aria-label="Manage folders"]'),
+    );
+    await click(
+      document.querySelector('[aria-label="Archived conversations"]'),
+    );
     assert.equal(selectedView, "archived");
-    assert.equal(document.querySelector("select"), null, "collections and management use themed tabs rather than native selects");
+    assert.equal(
+      document.querySelector("select"),
+      null,
+      "collections and management use themed tabs rather than native selects",
+    );
     const openMenu = async () => {
-      menuRequest = { conversationId: "chat", x: 900, y: 700, trigger: document.querySelector('[aria-label="Manage folders"]') };
+      menuRequest = {
+        conversationId: "chat",
+        x: 900,
+        y: 700,
+        trigger: document.querySelector('[aria-label="Manage folders"]'),
+      };
       await act(async () => renderControls());
     };
     await openMenu();
-    assert.deepEqual([...document.querySelectorAll('[role="menu"] button')].map((item) => item.textContent.trim()), ["Restore to Inbox", "Work", "Create Folder"]);
+    assert.deepEqual(
+      [...document.querySelectorAll('[role="menu"] button')].map((item) =>
+        item.textContent.trim(),
+      ),
+      ["Restore to Inbox", "Work", "Create Folder"],
+    );
     await click(document.querySelector('[role="menuitemcheckbox"]'));
-    assert.deepEqual(controlChanges.pop(), { action: "set_membership", folder_id: "work", conversation_id: "chat", included: false });
+    assert.deepEqual(controlChanges.pop(), {
+      action: "set_membership",
+      folder_id: "work",
+      conversation_id: "chat",
+      included: false,
+    });
     assert.equal(document.querySelector('[role="menu"]'), null);
     await openMenu();
     await click(button("Restore to Inbox"));
-    assert.deepEqual(controlChanges.pop(), { action: "archive", conversation_id: "chat", archived: false });
+    assert.deepEqual(controlChanges.pop(), {
+      action: "archive",
+      conversation_id: "chat",
+      archived: false,
+    });
     await openMenu();
     await click(button("Create Folder"));
     assert.equal(document.querySelector('[role="menu"]'), null);
-    assert.equal(document.activeElement, document.querySelector('[aria-label="New folder name"]'));
+    assert.equal(
+      document.activeElement,
+      document.querySelector('[aria-label="New folder name"]'),
+    );
     await changeValue('[aria-label="New folder name"]', "From context menu");
     await click(button("Create Folder"));
-    assert.deepEqual(controlChanges.pop(), { action: "create_folder", name: "From context menu" });
+    assert.deepEqual(controlChanges.pop(), {
+      action: "create_folder",
+      name: "From context menu",
+    });
     await click(button("Close"));
     updateSucceeds = false;
     await openMenu();
     await click(document.querySelector('[role="menuitemcheckbox"]'));
-    assert.ok(document.querySelector('[role="menu"]'), "unconfirmed mutation leaves menu open");
+    assert.ok(
+      document.querySelector('[role="menu"]'),
+      "unconfirmed mutation leaves menu open",
+    );
     controlState = { ...controlState, pending: true };
     await act(async () => renderControls());
-    assert.ok([...document.querySelectorAll('[role="menu"] button')].every((item) => item.disabled), "pending mutation prevents duplicate actions");
-    await act(async () => document.querySelector('[role="menu"]').dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    assert.ok(
+      [...document.querySelectorAll('[role="menu"] button')].every(
+        (item) => item.disabled,
+      ),
+      "pending mutation prevents duplicate actions",
+    );
+    await act(async () =>
+      document
+        .querySelector('[role="menu"]')
+        .dispatchEvent(
+          new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+        ),
+    );
     assert.equal(document.querySelector('[role="menu"]'), null);
   } finally {
     await act(async () => root.unmount());

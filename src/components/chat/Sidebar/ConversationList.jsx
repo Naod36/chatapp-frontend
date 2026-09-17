@@ -67,17 +67,44 @@ export default function ConversationList({
     event.stopPropagation();
     const trigger = event.currentTarget;
     const bounds = trigger.getBoundingClientRect();
-    setMenuRequest({ conversationId: conversation.id, x: fromButton ? bounds.left : event.clientX, y: fromButton ? bounds.bottom : event.clientY, trigger });
+    setMenuRequest({
+      conversationId: conversation.id,
+      x: fromButton ? bounds.left : event.clientX,
+      y: fromButton ? bounds.bottom : event.clientY,
+      trigger,
+    });
   };
   const rowKeys = (event, conversation) => {
     if (event.target !== event.currentTarget) return;
-    if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) openConversationMenu(event, conversation, true);
+    if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))
+      openConversationMenu(event, conversation, true);
     else if (event.key === "Enter") handleSelectConversation(conversation);
   };
-  const optionsButton = (conversation) => organization && <button type="button" className="ht-conversation-options" aria-label={`Options for ${conversation.display_name || conversation.title || "conversation"}`} title="Conversation options" onClick={(event) => openConversationMenu(event, conversation, true)}>
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="12" cy="19" r="1.8" /></svg>
-  </button>;
-  useEffect(() => { setMenuRequest(null); }, [convoTab, searchQuery, activeRailTab, user?.token]);
+  const optionsButton = (conversation) =>
+    organization && (
+      <button
+        type="button"
+        className="ht-conversation-options"
+        aria-label={`Options for ${conversation.display_name || conversation.title || "conversation"}`}
+        title="Conversation options"
+        onClick={(event) => openConversationMenu(event, conversation, true)}
+      >
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="currentColor"
+          aria-hidden="true"
+        >
+          <circle cx="12" cy="5" r="1.8" />
+          <circle cx="12" cy="12" r="1.8" />
+          <circle cx="12" cy="19" r="1.8" />
+        </svg>
+      </button>
+    );
+  useEffect(() => {
+    setMenuRequest(null);
+  }, [convoTab, searchQuery, activeRailTab, user?.token]);
   const inboxConversations = organizedConversations(
     conversations,
     organization,
@@ -301,7 +328,9 @@ export default function ConversationList({
                           key={c.id}
                           className="ht-conversation-row"
                           tabIndex={0}
-                          onContextMenu={(event) => openConversationMenu(event, c)}
+                          onContextMenu={(event) =>
+                            openConversationMenu(event, c)
+                          }
                           onKeyDown={(event) => rowKeys(event, c)}
                           onClick={() => handleSelectConversation(c)}
                           style={{
@@ -544,129 +573,130 @@ export default function ConversationList({
               })()}
 
             {/* Category Filter Tabs (All Messages / Groups) */}
-            {!organization && (() => {
-              const groupUnreadTotal = inboxConversations
-                .filter((c) => c.type === "group")
-                .reduce((acc, c) => acc + (c.unread_count || 0), 0);
+            {!organization &&
+              (() => {
+                const groupUnreadTotal = inboxConversations
+                  .filter((c) => c.type === "group")
+                  .reduce((acc, c) => acc + (c.unread_count || 0), 0);
 
-              return (
-                <div
-                  style={{
-                    display: "flex",
-                    flexWrap: "wrap",
-                    gap: 6,
-                    padding: "8px 12px",
-                    borderBottom: t.border,
-                    width: "100%",
-                    boxSizing: "border-box",
-                  }}
-                >
-                  <button
-                    type="button"
-                    onClick={() => setConvoTab("all")}
-                    aria-pressed={convoTab === "all"}
+                return (
+                  <div
                     style={{
-                      flex: 1,
-                      background:
-                        convoTab === "all"
-                          ? "rgba(56, 189, 248, 0.15)"
-                          : "transparent",
-                      border: "none",
-                      borderRadius: "10px",
-                      padding: "6px 8px",
-                      fontSize: "12px",
-                      fontWeight: 800,
-                      color:
-                        convoTab === "all"
-                          ? theme === "dark"
-                            ? "#38bdf8"
-                            : t.accent
-                          : t.textMuted,
-                      cursor: "pointer",
-                      textAlign: "center",
-                      whiteSpace: "nowrap",
-                      transition: "all 0.2s ease",
-                    }}
-                  >
-                    All Messages
-                  </button>
-                  <button
-                    type="button"
-                    aria-pressed={convoTab === "unread"}
-                    aria-label="Unread conversations"
-                    onClick={() => setConvoTab("unread")}
-                    style={{
-                      flex: 1,
-                      minWidth: "max-content",
-                      border: "none",
-                      borderRadius: 8,
-                      padding: "6px 8px",
-                      fontSize: 12,
-                      fontWeight: 800,
-                      background:
-                        convoTab === "unread"
-                          ? "rgba(56, 189, 248, 0.15)"
-                          : "transparent",
-                      color: convoTab === "unread" ? t.accent : t.textMuted,
-                      cursor: "pointer",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    Unread
-                    {unreadConversations.length > 0
-                      ? ` (${unreadConversations.length})`
-                      : ""}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setConvoTab("groups")}
-                    aria-label="Group conversations"
-                    aria-pressed={convoTab === "groups"}
-                    style={{
-                      flex: 1,
-                      background:
-                        convoTab === "groups"
-                          ? "rgba(56, 189, 248, 0.15)"
-                          : "transparent",
-                      border: "none",
-                      borderRadius: "10px",
-                      padding: "6px 8px",
-                      fontSize: "12px",
-                      fontWeight: 800,
-                      color:
-                        convoTab === "groups"
-                          ? theme === "dark"
-                            ? "#38bdf8"
-                            : t.accent
-                          : t.textMuted,
-                      cursor: "pointer",
                       display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
+                      flexWrap: "wrap",
                       gap: 6,
-                      whiteSpace: "nowrap",
-                      transition: "all 0.2s ease",
+                      padding: "8px 12px",
+                      borderBottom: t.border,
+                      width: "100%",
+                      boxSizing: "border-box",
                     }}
                   >
-                    <span>Groups</span>
-                    {groupUnreadTotal > 0 && (
-                      <span
-                        style={{
-                          background: t.accent,
-                          color: "#ffffff",
-                          borderRadius: 10,
-                          padding: "1px 6px",
-                          fontSize: 10,
-                          fontWeight: 800,
-                        }}
-                      >
-                        {groupUnreadTotal}
-                      </span>
-                    )}
-                  </button>
-                </div>
-              );
-            })()}
+                    <button
+                      type="button"
+                      onClick={() => setConvoTab("all")}
+                      aria-pressed={convoTab === "all"}
+                      style={{
+                        flex: 1,
+                        background:
+                          convoTab === "all"
+                            ? "rgba(56, 189, 248, 0.15)"
+                            : "transparent",
+                        border: "none",
+                        borderRadius: "10px",
+                        padding: "6px 8px",
+                        fontSize: "12px",
+                        fontWeight: 800,
+                        color:
+                          convoTab === "all"
+                            ? theme === "dark"
+                              ? "#38bdf8"
+                              : t.accent
+                            : t.textMuted,
+                        cursor: "pointer",
+                        textAlign: "center",
+                        whiteSpace: "nowrap",
+                        transition: "all 0.2s ease",
+                      }}
+                    >
+                      All Messages
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={convoTab === "unread"}
+                      aria-label="Unread conversations"
+                      onClick={() => setConvoTab("unread")}
+                      style={{
+                        flex: 1,
+                        minWidth: "max-content",
+                        border: "none",
+                        borderRadius: 8,
+                        padding: "6px 8px",
+                        fontSize: 12,
+                        fontWeight: 800,
+                        background:
+                          convoTab === "unread"
+                            ? "rgba(56, 189, 248, 0.15)"
+                            : "transparent",
+                        color: convoTab === "unread" ? t.accent : t.textMuted,
+                        cursor: "pointer",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      Unread
+                      {unreadConversations.length > 0
+                        ? ` (${unreadConversations.length})`
+                        : ""}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConvoTab("groups")}
+                      aria-label="Group conversations"
+                      aria-pressed={convoTab === "groups"}
+                      style={{
+                        flex: 1,
+                        background:
+                          convoTab === "groups"
+                            ? "rgba(56, 189, 248, 0.15)"
+                            : "transparent",
+                        border: "none",
+                        borderRadius: "10px",
+                        padding: "6px 8px",
+                        fontSize: "12px",
+                        fontWeight: 800,
+                        color:
+                          convoTab === "groups"
+                            ? theme === "dark"
+                              ? "#38bdf8"
+                              : t.accent
+                            : t.textMuted,
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: 6,
+                        whiteSpace: "nowrap",
+                        transition: "all 0.2s ease",
+                      }}
+                    >
+                      <span>Groups</span>
+                      {groupUnreadTotal > 0 && (
+                        <span
+                          style={{
+                            background: t.accent,
+                            color: "#ffffff",
+                            borderRadius: 10,
+                            padding: "1px 6px",
+                            fontSize: 10,
+                            fontWeight: 800,
+                          }}
+                        >
+                          {groupUnreadTotal}
+                        </span>
+                      )}
+                    </button>
+                  </div>
+                );
+              })()}
           </div>
 
           {organization && (
@@ -844,7 +874,9 @@ export default function ConversationList({
                         key={c.id}
                         className="ht-conversation-row"
                         tabIndex={0}
-                        onContextMenu={(event) => openConversationMenu(event, c)}
+                        onContextMenu={(event) =>
+                          openConversationMenu(event, c)
+                        }
                         onKeyDown={(event) => rowKeys(event, c)}
                         onClick={() => handleSelectConversation(c)}
                         style={{

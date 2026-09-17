@@ -2,7 +2,6 @@ import LoadFeedback from "../../LoadFeedback";
 import { useState } from "react";
 import EmojiPicker from "emoji-picker-react";
 import VoicePlayer from "../../VoicePlayer";
-import ImageLightbox from "../ImageLightbox";
 import { conversationService } from "../../../services/conversations.js";
 import {
   formatTime,
@@ -13,6 +12,7 @@ import {
 } from "../../../utils/theme";
 
 export default function ChatArea({
+  onOpenImage,
   pendingMessageAction = null,
   handleRetryMessage,
   handleDiscardMessage,
@@ -114,11 +114,7 @@ export default function ChatArea({
   API_BASE,
 }) {
   const [activePinIndex, setActivePinIndex] = useState(0);
-  const [lightboxIndex, setLightboxIndex] = useState(null);
   const typingColor = theme === "dark" ? "#38bdf8" : t.accent;
-  const imageMessages = (messages || []).filter(
-    (m) => m.message_type === "image" && (m.media_url || m.file_url),
-  );
 
   if (!activeConv) {
     return (
@@ -992,6 +988,9 @@ export default function ChatArea({
                       <img
                         src={getAssetUrl(m.media_url || m.file_url)}
                         alt="Attachment"
+                        role="button"
+                        tabIndex={0}
+                        aria-label="Open image"
                         style={{
                           maxWidth: "260px",
                           maxHeight: "260px",
@@ -999,12 +998,15 @@ export default function ChatArea({
                           objectFit: "cover",
                           cursor: "pointer",
                         }}
-                        onClick={() => {
-                          const msgKey = m.id || m.message_id;
-                          const idx = imageMessages.findIndex(
-                            (im) => (im.id || im.message_id) === msgKey,
-                          );
-                          setLightboxIndex(idx === -1 ? 0 : idx);
+                        onClick={(event) => {
+                          event.currentTarget.focus({ preventScroll: true });
+                          onOpenImage?.(m);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            onOpenImage?.(m);
+                          }
                         }}
                       />
                       {m.content &&
@@ -2321,18 +2323,6 @@ export default function ChatArea({
         onChange={handleFileSelect}
         style={{ display: "none" }}
       />
-      {lightboxIndex !== null && imageMessages.length > 0 && (
-        <ImageLightbox
-          images={imageMessages.map((im) => ({
-            id: im.id || im.message_id,
-            src: getAssetUrl(im.media_url || im.file_url),
-            caption: im.content,
-          }))}
-          startIndex={Math.min(lightboxIndex, imageMessages.length - 1)}
-          onClose={() => setLightboxIndex(null)}
-          t={t}
-        />
-      )}
     </div>
   );
 }

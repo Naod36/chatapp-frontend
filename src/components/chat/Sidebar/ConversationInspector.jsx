@@ -1,6 +1,7 @@
 import { getAssetUrl } from "../../../utils/theme";
 
 export default function ConversationInspector({
+  onOpenImage,
   showInspector,
   activeConv,
   rightSidebarWidth,
@@ -584,12 +585,22 @@ export default function ConversationInspector({
                     key={imgMsg.message_id || imgMsg.id}
                   >
                     <img
-                      src={getAssetUrl(imgMsg.media_url)}
-                      alt=""
+                      src={getAssetUrl(imgMsg.media_url || imgMsg.file_url)}
+                      alt="Shared image"
+                      role="button"
+                      tabIndex={0}
+                      aria-label="Open shared image"
                       style={{ cursor: "pointer" }}
-                      onClick={() =>
-                        window.open(getAssetUrl(imgMsg.media_url), "_blank")
-                      }
+                      onClick={(event) => {
+                        event.currentTarget.focus({ preventScroll: true });
+                        onOpenImage?.(imgMsg);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          onOpenImage?.(imgMsg);
+                        }
+                      }}
                     />
                   </div>
                 ))}

@@ -33,6 +33,7 @@ import {
 import NavigationRail from "./chat/Sidebar/NavigationRail";
 import ConversationList from "./chat/Sidebar/ConversationList";
 import ConversationInspector from "./chat/Sidebar/ConversationInspector";
+import ImageLightbox from "./chat/ImageLightbox";
 import ChatArea from "./chat/ChatArea/ChatArea";
 import CreateGroupModal from "./chat/Modals/CreateGroupModal";
 import AddMemberModal from "./chat/Modals/AddMemberModal";
@@ -171,7 +172,11 @@ export default function ChatDashboard({ user, onLogout }) {
     to: "",
   });
   const [historyTarget, setHistoryTarget] = useState(null);
+  const [imageViewer, setImageViewer] = useState(null);
   const historyTargetRef = useRef(null);
+  useEffect(() => {
+    setImageViewer(null);
+  }, [activeConv?.id, user.token]);
   const [searchResults, setSearchResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
   const [wsConnected, setWsConnected] = useState(false);
@@ -3298,7 +3303,44 @@ export default function ChatDashboard({ user, onLogout }) {
       />
 
       {/* 3. Center Messaging Pane */}
+      {imageViewer && (
+        <ImageLightbox
+          images={imageViewer.images}
+          startIndex={imageViewer.startIndex}
+          onClose={() => setImageViewer(null)}
+          onJumpToMessage={(image) => {
+            const conversation = conversationsRef.current.find(
+              (item) => item.id === imageViewer.conversationId,
+            );
+            setImageViewer(null);
+            if (conversation)
+              handleSelectConversation(conversation, false, image.id);
+            else showError("Conversation is no longer available.");
+          }}
+        />
+      )}
       <ChatArea
+        onOpenImage={(message) => {
+          const images = messagesForDisplay.filter(
+            (item) =>
+              item.message_type === "image" &&
+              (item.media_url || item.file_url),
+          );
+          const id = message.id || message.message_id;
+          setImageViewer({
+            conversationId: activeConv.id,
+            images: images.map((item) => ({
+              id: item.id || item.message_id,
+              src: getAssetUrl(item.media_url || item.file_url),
+              caption: item.content,
+              canJump: isConfirmedMessage(item),
+            })),
+            startIndex: Math.max(
+              0,
+              images.findIndex((item) => (item.id || item.message_id) === id),
+            ),
+          });
+        }}
         historyTarget={historyTarget}
         onLatestHistory={() => handleSelectConversation(activeConvRef.current)}
         handleRetryMessage={handleRetryMessage}
@@ -3410,6 +3452,24 @@ export default function ChatDashboard({ user, onLogout }) {
 
       {/* 4. Far Right Conversation Details Inspector Panel */}
       <ConversationInspector
+        onOpenImage={(message) => {
+          const id = message.id || message.message_id;
+          setImageViewer({
+            conversationId: activeConv.id,
+            images: sharedImages.map((item) => ({
+              id: item.id || item.message_id,
+              src: getAssetUrl(item.media_url || item.file_url),
+              caption: item.content,
+              canJump: isConfirmedMessage(item),
+            })),
+            startIndex: Math.max(
+              0,
+              sharedImages.findIndex(
+                (item) => (item.id || item.message_id) === id,
+              ),
+            ),
+          });
+        }}
         showInspector={showInspector}
         activeConv={activeConvForDisplay}
         rightSidebarWidth={rightSidebarWidth}
