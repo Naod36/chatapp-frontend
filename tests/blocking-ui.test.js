@@ -59,6 +59,8 @@ test("dashboard blocking wiring, refresh triggers, masking and send races", asyn
   const root = createRoot(document.getElementById("root"));
   try {
     const { userService } = await server.ssrLoadModule("/src/services/user.js");
+    const { organizationService } = await server.ssrLoadModule("/src/services/organization.js");
+    organizationService.get = async () => ({ revision: 0, archived_ids: [], folders: [] });
     const { conversationService } = await server.ssrLoadModule(
       "/src/services/conversations.js",
     );
@@ -726,6 +728,7 @@ test("dashboard blocking wiring, refresh triggers, masking and send races", asyn
     await flush(() => confirmDraft({ message_id: "draft-sent", status: "sent", sender_id: "me", content: "Direct draft" }));
     assert.equal(document.querySelector("textarea").value, "New direct draft", "late confirmation preserves newer text");
     await flush(submitDraft);
+    assert.equal(document.querySelector(".ht-upload-progress-container"), null, "pending text sends do not show attachment upload progress");
     await select("Shared Group");
     await flush(() => confirmDraft({ message_id: "draft-sent-again", status: "sent", sender_id: "me", content: "New direct draft" }));
     assert.equal(document.querySelector("textarea").value, "New group draft", "confirmation cannot clear another conversation");
@@ -849,7 +852,8 @@ test("dashboard blocking wiring, refresh triggers, masking and send races", asyn
         canSendToConversation: () => allowed,
         setIsRecording() {},
         setRecordingSeconds() {},
-        setIsUploading() {},
+        setIsUploading(value) { props.isUploading = value; },
+        setUploadProgress(value) { props.uploadProgress = value; },
         socketRef: {
           current: { send: (payload) => sent.push(JSON.parse(payload)) },
         },
@@ -876,8 +880,10 @@ test("dashboard blocking wiring, refresh triggers, masking and send races", asyn
       );
       await flush(() => releaseMic(stream));
       assert.ok(recorder);
-      globalThis.fetch = async () => {
+      conversationService.uploadFile = async (file, onProgress) => {
         voiceUploads += 1;
+        assert.equal(file.type, "audio/webm");
+        onProgress({ percentage: 50, loadedFormatted: "0.5 MB", totalFormatted: "1.0 MB" });
         return new Promise((resolve) => {
           releaseVoiceUpload = resolve;
         });
@@ -888,14 +894,15 @@ test("dashboard blocking wiring, refresh triggers, masking and send races", asyn
         voicePromise = recorder.onstop();
       });
       assert.equal(voiceUploads, 1);
+      await flush(() => childRoot.render(React.createElement(ChatArea, props)));
+      assert.match(document.querySelector(".ht-upload-progress-container").parentElement.textContent, /Uploading voice message/);
+      assert.match(document.querySelector(".ht-upload-progress-container").parentElement.textContent, /50%/);
       allowed = false;
       await flush(async () => {
-        releaseVoiceUpload({
-          ok: true,
-          json: async () => ({ url: "/voice.webm" }),
-        });
+        releaseVoiceUpload({ url: "/voice.webm" });
         await voicePromise;
       });
+      assert.equal(props.isUploading, false, "voice upload indicator clears after transfer");
       assert.equal(
         sent.filter((payload) => payload.action === "send_message").length,
         0,

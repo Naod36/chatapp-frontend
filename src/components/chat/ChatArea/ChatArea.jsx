@@ -3,8 +3,7 @@ import { useState } from "react";
 import EmojiPicker from "emoji-picker-react";
 import VoicePlayer from "../../VoicePlayer";
 import ImageLightbox from "../ImageLightbox";
-import { expireSession } from "../../../services/session.js";
-import { validateUploadSize, UPLOAD_REJECTED_ERROR } from "../../../utils/uploadLimits.js";
+import { conversationService } from "../../../services/conversations.js";
 import {
   formatTime,
   renderMessageStatus,
@@ -91,6 +90,7 @@ export default function ChatArea({
   isUploading,
   setIsUploading,
   uploadProgress,
+  setUploadProgress,
   cancelBatchSend,
   fileInputRef,
   inputTextareaRef,
@@ -1812,7 +1812,9 @@ export default function ChatArea({
                   ></span>
                   {uploadProgress.batchTotal
                     ? `Sending ${uploadProgress.batchCurrent} of ${uploadProgress.batchTotal}...`
-                    : "Uploading attachment..."}
+                    : uploadProgress.kind === "voice"
+                      ? "Uploading voice message..."
+                      : "Uploading attachment..."}
                 </span>
                 <span
                   style={{ fontSize: 11, fontWeight: 700, color: "#38bdf8" }}
@@ -2092,20 +2094,18 @@ export default function ChatArea({
                           if (blob.size < 1000) return;
 
                           setIsUploading(true);
+                          setUploadProgress({
+                            kind: "voice",
+                            percentage: 0,
+                            loadedFormatted: "0.0 MB",
+                            totalFormatted: `${(blob.size / (1024 * 1024)).toFixed(1)} MB`,
+                          });
                           try {
-                            validateUploadSize(blob);
-                            const fd = new FormData();
-                            fd.append("file", blob, `voice_${Date.now()}.webm`);
-                            const token = localStorage.getItem("chat_token");
-                            const res = await fetch(`${API_BASE}/upload`, {
-                              method: "POST",
-                              headers: { Authorization: `Bearer ${token}` },
-                              body: fd,
+                            const file = new File([blob], `voice_${Date.now()}.webm`, { type: blob.type });
+                            const data = await conversationService.uploadFile(file, (progress) => {
+                              setUploadProgress({ ...progress, kind: "voice" });
                             });
-                            if (res.status === 401) expireSession(token);
-                            if (res.status === 413) throw new Error(UPLOAD_REJECTED_ERROR);
-                            if (!res.ok) throw new Error("Voice upload failed");
-                            const data = await res.json();
+                            setIsUploading(false);
                             if (data.url && canSendToConversation(activeConv)) {
                               await sendOptimisticMessage(activeConv, {
                                 content: "Voice message",

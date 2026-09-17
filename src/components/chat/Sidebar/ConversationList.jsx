@@ -7,8 +7,11 @@ import {
 import { apiFetch, API_BASE } from "../../../services/api";
 import LoadFeedback from "../../LoadFeedback";
 import { MAX_UPLOAD_LABEL } from "../../../utils/uploadLimits.js";
+import OrganizationControls from "./OrganizationControls";
+import { organizedConversations } from "../../../utils/conversationOrganization.js";
 
 export default function ConversationList({
+  organization,
   drafts = {},
   conversationError,
   conversationsLoading,
@@ -52,8 +55,14 @@ export default function ConversationList({
 }) {
   const [latestRelease, setLatestRelease] = useState(null);
   const [isLoadingRelease, setIsLoadingRelease] = useState(false);
-  const unreadConversations = conversations.filter((conversation) => Number(conversation.unread_count) > 0);
-  const visibleConversations = convoTab === "unread" ? unreadConversations : conversations;
+  const inboxConversations = organizedConversations(conversations, organization, "all");
+  const unreadConversations = inboxConversations.filter((conversation) => Number(conversation.unread_count) > 0);
+  const visibleConversations = convoTab === "unread" ? unreadConversations : organizedConversations(conversations, organization, convoTab);
+  const currentFolder = organization?.folders.find((folder) => `folder:${folder.id}` === convoTab);
+
+  useEffect(() => {
+    if (organization?.ready && convoTab.startsWith("folder:") && !currentFolder) setConvoTab("all");
+  }, [organization?.ready, convoTab, currentFolder, setConvoTab]);
 
   useEffect(() => {
     if (activeRailTab === "download") {
@@ -493,7 +502,7 @@ export default function ConversationList({
 
             {/* Category Filter Tabs (All Messages / Groups) */}
             {(() => {
-              const groupUnreadTotal = conversations
+              const groupUnreadTotal = inboxConversations
                 .filter((c) => c.type === "group")
                 .reduce((acc, c) => acc + (c.unread_count || 0), 0);
 
@@ -605,6 +614,7 @@ export default function ConversationList({
             })()}
           </div>
 
+          {organization && <OrganizationControls organization={organization} conversations={conversations} view={convoTab} onViewChange={setConvoTab} themeTokens={t} />}
           <div className="ht-convo-list">
             {!searchQuery.trim() && <LoadFeedback error={conversationError} loading={conversationsLoading && (!conversations.length || Boolean(conversationError))} label="Conversations" onRetry={onRetryConversations} themeTokens={t} />}
             {searchQuery.trim() && searchError ? (
@@ -728,7 +738,7 @@ export default function ConversationList({
                     <span>+ Group</span>
                   </button>
                 </div>
-                {conversations
+                {visibleConversations
                   .filter((c) => c.type === "group")
                   .map((c) => {
                     const isActive = activeConv && activeConv.id === c.id;
@@ -931,7 +941,7 @@ export default function ConversationList({
                       </div>
                     );
                   })}
-                {conversations.filter((c) => c.type === "group").length ===
+                {visibleConversations.filter((c) => c.type === "group").length ===
                   0 && !conversationError && !conversationsLoading && (
                   <div
                     style={{
@@ -959,7 +969,7 @@ export default function ConversationList({
                     gap: 5,
                   }}
                 >
-                  {convoTab === "unread" ? "Unread Conversations" : "All Messages"}
+                  {convoTab === "unread" ? "Unread Conversations" : convoTab === "archived" ? "Archived Conversations" : currentFolder?.name || "All Messages"}
                 </div>
                 {visibleConversations.map((c) => {
                   const isActive = activeConv && activeConv.id === c.id;
@@ -1223,7 +1233,7 @@ export default function ConversationList({
                       fontSize: 11,
                     }}
                   >
-                    {convoTab === "unread" ? "All caught up." : "No messages yet."}
+                    {convoTab === "unread" ? "All caught up." : convoTab === "archived" ? "No archived conversations." : currentFolder ? "No conversations in this folder." : "No messages yet."}
                   </div>
                 )}
               </>

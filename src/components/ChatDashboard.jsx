@@ -1,6 +1,7 @@
 import { validateUploadSize } from "../utils/uploadLimits.js";
 import { useConversationDrafts } from "../hooks/useConversationDrafts.js";
 import { useOutbox } from "../hooks/useOutbox.js";
+import useConversationOrganization from "../hooks/useConversationOrganization.js";
 import { mergeOutbox } from "../utils/outbox.js";
 import { useEffect, useRef, useState } from "react";
 import { userService } from "../services/user";
@@ -208,6 +209,7 @@ export default function ChatDashboard({ user, onLogout }) {
   // UI redesign states
   const [activeRailTab, setActiveRailTab] = useState("chats"); // "chats" | "profile" | "settings"
   const [convoTab, setConvoTab] = useState("all"); // "all" | "groups"
+  const organization = useConversationOrganization(user.token);
   const [showInspector, setShowInspector] = useState(false);
   const [compactChatOpen, setCompactChatOpen] = useState(false);
   const [compactNavigationOpen, setCompactNavigationOpen] = useState(false);
@@ -2509,23 +2511,21 @@ export default function ChatDashboard({ user, onLogout }) {
     const clearSentDraft = captureDraft(activeConv.id);
     sendingMessageRef.current = true;
 
-    setIsUploading(true);
-    setUploadProgress({
-      percentage: 0,
-      loadedFormatted: "0.0 MB",
-      totalFormatted: selectedFile
-        ? `${(selectedFile.size / (1024 * 1024)).toFixed(1)} MB`
-        : "0.0 MB",
-    });
-
     try {
       if (selectedFile) {
+        setIsUploading(true);
+        setUploadProgress({
+          percentage: 0,
+          loadedFormatted: "0.0 MB",
+          totalFormatted: `${(selectedFile.size / (1024 * 1024)).toFixed(1)} MB`,
+        });
         const uploadRes = await conversationService.uploadFile(
           selectedFile,
           (progressInfo) => {
             setUploadProgress(progressInfo);
           },
         );
+        setIsUploading(false);
         mediaUrl = uploadRes.url;
         mType = selectedFile.type.startsWith("image/")
           ? "image"
@@ -2976,6 +2976,7 @@ export default function ChatDashboard({ user, onLogout }) {
 
       {/* 2. Conversations / Settings / Profile Sidebar */}
       <ConversationList
+        organization={organization}
         drafts={drafts}
         conversationError={conversationError}
         conversationsLoading={conversationsLoading}
@@ -3103,6 +3104,7 @@ export default function ChatDashboard({ user, onLogout }) {
         isUploading={isUploading}
         setIsUploading={setIsUploading}
         uploadProgress={uploadProgress}
+        setUploadProgress={setUploadProgress}
         cancelBatchSend={cancelBatchSend}
         fileInputRef={fileInputRef}
         inputTextareaRef={inputTextareaRef}
