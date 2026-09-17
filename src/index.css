@@ -1,3 +1,19 @@
+.ht-failed-message-actions button {
+  color: inherit;
+  background: transparent;
+  border: 0;
+  padding: 6px 0;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ht-failed-message-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.ht-failed-message-actions button:hover:not(:disabled) {
+  text-decoration: underline;
+}
 /* Reset and generic base styles */
 html,
 body {
@@ -135,6 +151,7 @@ body {
   display: flex;
   width: 100vw;
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
   overflow-x: hidden;
   font-family:
@@ -634,9 +651,75 @@ body {
   box-sizing: border-box;
 }
 
+.ht-compact-header {
+  display: none;
+}
+
 @media (max-width: 1100px) {
-  .ht-inspector {
-    display: none !important;
+  .ht-app-container {
+    flex-direction: column;
+  }
+
+  .ht-compact-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 0 0 52px;
+    padding: 0 12px;
+    font-weight: 700;
+  }
+
+  .ht-compact-header button {
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    flex-shrink: 0;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+  }
+
+  .ht-compact-header button:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 2px;
+  }
+
+  .ht-app-container > .ht-rail,
+  .ht-app-container > .ht-sidebar,
+  .ht-app-container > .ht-chat-pane,
+  .ht-app-container > .ht-inspector {
+    display: none;
+    width: 100% !important;
+    min-width: 0 !important;
+    min-height: 0;
+    height: auto;
+    flex: 1;
+  }
+
+  .ht-app-container[data-compact-view="navigation"] > .ht-rail,
+  .ht-app-container[data-compact-view="list"] > .ht-sidebar,
+  .ht-app-container[data-compact-view="chat"] > .ht-chat-pane,
+  .ht-app-container[data-compact-view="details"] > .ht-inspector {
+    display: flex;
+  }
+
+  .ht-app-container .ht-drag-handle {
+    display: none;
+  }
+
+  .ht-chat-header > div {
+    min-width: 0;
+  }
+
+  .ht-chat-header h3 {
+    overflow-wrap: anywhere;
+  }
+
+  .ht-chat-header input {
+    min-width: 0;
   }
 }
 

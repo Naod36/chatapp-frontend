@@ -1,3 +1,6 @@
+import { expireSession } from "./session.js";
+import { UPLOAD_REJECTED_ERROR, validateUploadSize } from "../utils/uploadLimits.js";
+
 export const API_BASE = import.meta.env.VITE_API_URL || "https://chatapp-backend-chyk.onrender.com";
 export const WS_BASE = import.meta.env.VITE_WS_URL || "wss://chatapp-backend-chyk.onrender.com";
 
@@ -6,7 +9,7 @@ export const WS_BASE = import.meta.env.VITE_WS_URL || "wss://chatapp-backend-chy
  */
 function parseErrorMessage(response, data) {
     if (response.status === 413) {
-        return "The attachment size is too large. Please select a smaller file (under 25MB).";
+        return UPLOAD_REJECTED_ERROR;
     }
     if (response.status === 422) {
         return "Invalid request payload or form formatting. Please check your details and try again.";
@@ -70,6 +73,7 @@ export async function apiFetch(endpoint, options = {}) {
 
     try {
         const response = await fetch(`${API_BASE}${endpoint}`, config);
+        if (response.status === 401) expireSession(token);
         
         let data;
         const contentType = response.headers.get("content-type");
@@ -103,6 +107,7 @@ export async function apiFetch(endpoint, options = {}) {
  */
 export function uploadFileWithProgress(file, onProgress) {
     return new Promise((resolve, reject) => {
+        validateUploadSize(file);
         const xhr = new XMLHttpRequest();
         const formData = new FormData();
         formData.append("file", file);
@@ -128,6 +133,7 @@ export function uploadFileWithProgress(file, onProgress) {
         };
 
         xhr.onload = () => {
+            if (xhr.status === 401) expireSession(token);
             let data;
             const contentType = xhr.getResponseHeader("content-type");
             if (contentType && contentType.includes("application/json")) {

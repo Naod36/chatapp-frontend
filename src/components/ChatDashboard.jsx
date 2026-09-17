@@ -1,3 +1,7 @@
+import { validateUploadSize } from "../utils/uploadLimits.js";
+import { useConversationDrafts } from "../hooks/useConversationDrafts.js";
+import { useOutbox } from "../hooks/useOutbox.js";
+import { mergeOutbox } from "../utils/outbox.js";
 import { useEffect, useRef, useState } from "react";
 import { userService } from "../services/user";
 import { conversationService } from "../services/conversations";
@@ -5,8 +9,23 @@ import { websocketService } from "../services/websocket";
 import { API_BASE } from "../services/api";
 import { THEME } from "../utils/theme";
 import useBlockState from "../hooks/useBlockState";
-import { confirmOutgoingMessage, failOutgoingMessage, isConfirmedMessage } from "../utils/outgoingMessages.js";
-import { blockPolicy, directBlockPolicy, maskConversation, maskMessage, maskParticipant, participantId, visibleTypingUsers, UNAVAILABLE_NAME } from "../utils/blocking.js";
+import { trackMessageArrivals } from "../utils/messageArrivals.js";
+import { createMessageActionTracker } from "../utils/messageActions.js";
+import {
+  confirmOutgoingMessage,
+  failOutgoingMessage,
+  isConfirmedMessage,
+} from "../utils/outgoingMessages.js";
+import {
+  blockPolicy,
+  directBlockPolicy,
+  maskConversation,
+  maskMessage,
+  maskParticipant,
+  participantId,
+  visibleTypingUsers,
+  UNAVAILABLE_NAME,
+} from "../utils/blocking.js";
 
 // Modular Component Imports
 import NavigationRail from "./chat/Sidebar/NavigationRail";
@@ -142,7 +161,7 @@ export default function ChatDashboard({ user, onLogout }) {
   const [conversations, setConversations] = useState([]);
   const [activeConv, setActiveConv] = useState(null);
   const [messages, setMessages] = useState([]);
-  const [messageText, setMessageText] = useState("");
+  const [editText, setEditText] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -163,18 +182,40 @@ export default function ChatDashboard({ user, onLogout }) {
   }, [wsConnected]);
   const [typingUsers, setTypingUsers] = useState({}); // { [convId]: { [userId]: boolean } }
   const [errorToast, setErrorToast] = useState(null);
+  const [conversationError, setConversationError] = useState(null);
+  const [conversationsLoading, setConversationsLoading] = useState(true);
+  const conversationRequestRef = useRef(0);
+  const historyRequestRef = useRef(0);
+  const [historyState, setHistoryState] = useState({ loading: false, error: null });
+  const [searchError, setSearchError] = useState(null);
+  const [searchAttempt, setSearchAttempt] = useState(0);
+  const errorToastTimeoutRef = useRef(null);
 
   const showError = (msg) => {
     setErrorToast(msg);
-    setTimeout(() => {
+    if (errorToastTimeoutRef.current) clearTimeout(errorToastTimeoutRef.current);
+    errorToastTimeoutRef.current = setTimeout(() => {
       setErrorToast(null);
     }, 5000);
   };
+
+  useEffect(() => {
+    return () => {
+      if (errorToastTimeoutRef.current) clearTimeout(errorToastTimeoutRef.current);
+    };
+  }, []);
 
   // UI redesign states
   const [activeRailTab, setActiveRailTab] = useState("chats"); // "chats" | "profile" | "settings"
   const [convoTab, setConvoTab] = useState("all"); // "all" | "groups"
   const [showInspector, setShowInspector] = useState(false);
+  const [compactChatOpen, setCompactChatOpen] = useState(false);
+  const [compactNavigationOpen, setCompactNavigationOpen] = useState(false);
+  useEffect(() => {
+    setCompactChatOpen(Boolean(activeConv?.id));
+    setCompactNavigationOpen(false);
+    setShowInspector(false);
+  }, [activeConv?.id]);
   const [myProfile, setMyProfile] = useState({
     display_name: user?.username || "",
     bio: "",
@@ -187,8 +228,33 @@ export default function ChatDashboard({ user, onLogout }) {
     loadedFormatted: "0 MB",
     totalFormatted: "0 MB",
   });
+  const batchCancelRef = useRef(false);
   const [replyingTo, setReplyingTo] = useState(null);
   const [editingMessage, setEditingMessage] = useState(null);
+  const { drafts, setDraft, captureDraft, moveDraft } = useConversationDrafts(String(user.userId), showError);
+  const sendingMessageRef = useRef(false);
+  const outbox = useOutbox(String(user.userId), showError);
+  const pendingSendIdsRef = useRef(new Set());
+  const messageText = editingMessage ? editText : drafts[activeConv?.id] || "";
+  const setMessageText = (value) => {
+    if (editingMessage) setEditText(value);
+    else setDraft(activeConv?.id, value);
+  };
+  useEffect(() => {
+    setEditingMessage(null);
+    setReplyingTo(null);
+    setEditText("");
+    setSelectedFile(null);
+    setFilePreview((preview) => {
+      if (preview?.startsWith("blob:")) URL.revokeObjectURL(preview);
+      return null;
+    });
+    setContextMenu(null);
+    setShowEmojiPicker(false);
+  }, [activeConv?.id, user.userId]);
+  const [pendingMessageAction, setPendingMessageAction] = useState(null);
+  const actionTrackerRef = useRef(null);
+  const actionCallbacksRef = useRef(null);
   const [contextMenu, setContextMenu] = useState(null);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
@@ -250,22 +316,50 @@ export default function ChatDashboard({ user, onLogout }) {
 
   const isBlocked = (userId) => blockedUserIds.includes(String(userId));
   const isBlockedBy = (userId) => blockedByUserIds.includes(String(userId));
-  const activeBlockPolicy = directBlockPolicy(activeConv, blockedUserIds, blockedByUserIds);
+  const activeBlockPolicy = directBlockPolicy(
+    activeConv,
+    blockedUserIds,
+    blockedByUserIds,
+  );
   const directReadOnly = !activeBlockPolicy.canInteract;
   const activeConvForDisplay = maskConversation(activeConv, blockedByUserIds);
-  const conversationsForDisplay = conversations.map((conversation) => maskConversation(conversation, blockedByUserIds));
-  const messagesForDisplay = messages.map((message) => maskMessage(message, blockedByUserIds, activeBlockPolicy.incoming));
-  const pinsForDisplay = Object.fromEntries(Object.entries(pinnedMessagesMap).map(([conversationId, pins]) => [
-    conversationId,
-    pins.map((pin) => maskMessage(pin, blockedByUserIds)),
-  ]));
+  const conversationsForDisplay = conversations.map((conversation) =>
+    maskConversation(conversation, blockedByUserIds),
+  );
+  const messagesForDisplay = mergeOutbox(messages, outbox.entries, activeConv?.id).map((message) =>
+    maskMessage(message, blockedByUserIds, activeBlockPolicy.incoming),
+  );
+  useEffect(() => {
+    const confirmed = new Set(messages.filter(isConfirmedMessage).map((message) => message.message_id || message.id));
+    const reconciled = outbox.entries.filter((entry) => entry.conversation_id === activeConv?.id && confirmed.has(entry.client_id));
+    if (!reconciled.length) return;
+    const temporaryIds = new Set(reconciled.map((entry) => entry.id));
+    for (const entry of reconciled) outbox.remove(entry.client_id);
+    setMessages((previous) => previous.filter((message) => !temporaryIds.has(message.id)));
+  }, [messages, outbox.entries, activeConv?.id]);
+  const pinsForDisplay = Object.fromEntries(
+    Object.entries(pinnedMessagesMap).map(([conversationId, pins]) => [
+      conversationId,
+      pins.map((pin) => maskMessage(pin, blockedByUserIds)),
+    ]),
+  );
   const typingForDisplay = visibleTypingUsers(typingUsers, blockedByUserIds);
-  const canInteractWithConversation = (conversation = activeConvRef.current) => {
+  const canInteractWithConversation = (
+    conversation = activeConvRef.current,
+  ) => {
     const state = blockStateRef.current;
-    return state.ready && directBlockPolicy(conversation, state.outgoing, state.incoming).canInteract;
+    return (
+      state.ready &&
+      directBlockPolicy(conversation, state.outgoing, state.incoming)
+        .canInteract
+    );
   };
   const canSendToConversation = (conversation) => {
-    return Boolean(conversation && activeConvRef.current?.id === conversation.id && canInteractWithConversation(conversation));
+    return Boolean(
+      conversation &&
+      activeConvRef.current?.id === conversation.id &&
+      canInteractWithConversation(conversation),
+    );
   };
 
   const handleBlockUser = async (userId) => {
@@ -299,7 +393,10 @@ export default function ChatDashboard({ user, onLogout }) {
 
   const [rawViewingParticipantProfile, setViewingParticipantProfile] =
     useState(null);
-  const viewingParticipantProfile = maskParticipant(rawViewingParticipantProfile, blockedByUserIds);
+  const viewingParticipantProfile = maskParticipant(
+    rawViewingParticipantProfile,
+    blockedByUserIds,
+  );
   const [isRailExpanded, setIsRailExpanded] = useState(() => {
     const saved = localStorage.getItem("chat_rail_expanded");
     return saved !== null ? saved === "true" : true;
@@ -404,10 +501,15 @@ export default function ChatDashboard({ user, onLogout }) {
   const [addMemberQuery, setAddMemberQuery] = useState("");
   const [addMemberResults, setAddMemberResults] = useState([]);
   const [rawParticipantContextMenu, setParticipantContextMenu] = useState(null);
-  const participantContextMenu = rawParticipantContextMenu ? {
-    ...rawParticipantContextMenu,
-    participant: maskParticipant(rawParticipantContextMenu.participant, blockedByUserIds),
-  } : null;
+  const participantContextMenu = rawParticipantContextMenu
+    ? {
+        ...rawParticipantContextMenu,
+        participant: maskParticipant(
+          rawParticipantContextMenu.participant,
+          blockedByUserIds,
+        ),
+      }
+    : null;
 
   // Group Info & Admin Management state
   const [isGroupInfoOpen, setIsGroupInfoOpen] = useState(false);
@@ -604,7 +706,7 @@ export default function ChatDashboard({ user, onLogout }) {
   useEffect(() => {
     const handleMouseMove = (e) => {
       if (isResizingLeft) {
-        const railWidth = 72;
+        const railWidth = document.querySelector(".ht-rail")?.getBoundingClientRect().width || 72;
         const newWidth = Math.min(Math.max(e.clientX - railWidth, 220), 550);
         setLeftSidebarWidth(newWidth);
         localStorage.setItem("chat_left_sidebar_width", String(newWidth));
@@ -886,7 +988,9 @@ export default function ChatDashboard({ user, onLogout }) {
 
   const safeSendWs = (payload) => {
     const conversation = payload.conversation_id
-      ? conversationsRef.current.find((item) => String(item.id) === String(payload.conversation_id)) || activeConvRef.current
+      ? conversationsRef.current.find(
+          (item) => String(item.id) === String(payload.conversation_id),
+        ) || activeConvRef.current
       : activeConvRef.current;
     if (!canInteractWithConversation(conversation)) return false;
     try {
@@ -903,9 +1007,65 @@ export default function ChatDashboard({ user, onLogout }) {
     return false;
   };
 
+  const notificationPreferencesRef = useRef({ soundEnabled, mutedConvIds });
+  actionCallbacksRef.current = {
+    send: safeSendWs,
+    settle: async (action, error) => {
+      if (error) showError(error);
+      if (activeConvRef.current?.id !== action.conversation_id) return;
+      if (!error && action.action === "edit_message") {
+        setEditingMessage((current) => current?.id === action.message_id ? null : current);
+        setEditText((current) => current.trim() === action.content ? "" : current);
+      }
+      if (error) {
+        const token = user.token;
+        const revision = dataRevisionRef.current;
+        const [history, pins] = await Promise.allSettled([
+          conversationService.getMessages(action.conversation_id),
+          conversationService.getPinnedMessages(action.conversation_id),
+        ]);
+        if (blockStateRef.current.token !== token || revision !== dataRevisionRef.current ||
+            activeConvRef.current?.id !== action.conversation_id) return;
+        if (history.status === "fulfilled") setMessages((previous) => [
+          ...history.value.map((message) => ({ ...message, id: message.message_id || message.id })),
+          ...previous.filter((message) => !isConfirmedMessage(message)),
+        ]);
+        if (pins.status === "fulfilled") setPinnedMessagesMap((previous) => ({
+          ...previous, [action.conversation_id]: pins.value,
+        }));
+        if (history.status === "rejected" || pins.status === "rejected") {
+          showError("Could not refresh the action result. Reopen this conversation before retrying.");
+        }
+      }
+    },
+  };
+  if (!actionTrackerRef.current) {
+    actionTrackerRef.current = createMessageActionTracker({
+      userId: user.userId,
+      send: (action) => actionCallbacksRef.current.send(action),
+      onChange: setPendingMessageAction,
+      onSettle: (action, error) => actionCallbacksRef.current.settle(action, error),
+    });
+  }
+  useEffect(() => () => actionTrackerRef.current?.dispose(), []);
+  const sendMessageAction = (payload) => {
+    const error = actionTrackerRef.current.start(payload);
+    if (error) showError(error);
+    return !error;
+  };
+
+  notificationPreferencesRef.current = { soundEnabled, mutedConvIds };
+
+  const isNotificationMuted = (conversationId) => {
+    const muted = notificationPreferencesRef.current.mutedConvIds;
+    return Array.isArray(muted)
+      ? muted.some((id) => String(id) === String(conversationId))
+      : Boolean(muted?.[conversationId]);
+  };
+
   const playNotificationSound = (targetConvId) => {
-    if (!soundEnabled) return;
-    if (targetConvId && mutedConvIds[targetConvId]) return;
+    if (!notificationPreferencesRef.current.soundEnabled) return;
+    if (isNotificationMuted(targetConvId)) return;
     try {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       if (!AudioCtx) return;
@@ -950,6 +1110,9 @@ export default function ChatDashboard({ user, onLogout }) {
   const [showScrollBottomBtn, setShowScrollBottomBtn] = useState(false);
   const [newMessagesBelowCount, setNewMessagesBelowCount] = useState(0);
   const chatContainerRef = useRef(null);
+  const followLatestRef = useRef(true);
+  const renderedMessageIdsRef = useRef(new Set());
+  const unseenMessageIdsRef = useRef(new Set());
 
   const socketRef = useRef(null);
   const messageEndRef = useRef(null);
@@ -958,6 +1121,49 @@ export default function ChatDashboard({ user, onLogout }) {
   const conversationsRef = useRef(conversations);
   const dataRevisionRef = useRef(0);
   const inputTextareaRef = useRef(null);
+  const loadedConversationRef = useRef(null);
+  const compactVisibilityRef = useRef(null);
+  compactVisibilityRef.current = { compactChatOpen, compactNavigationOpen, showInspector };
+
+  const isConversationVisible = (conversationId) => {
+    if (document.hidden || String(activeConvRef.current?.id) !== String(conversationId)) return false;
+    if (loadedConversationRef.current !== conversationId) return false;
+    if (window.matchMedia("(max-width: 1100px)").matches) {
+      const view = compactVisibilityRef.current;
+      if (!view.compactChatOpen || view.compactNavigationOpen || view.showInspector) return false;
+    }
+    const container = chatContainerRef.current;
+    return Boolean(container && container.scrollHeight - container.scrollTop - container.clientHeight <= 120);
+  };
+
+  const markVisibleConversationRead = (conversationId) => {
+    if (!conversationId || !isConversationVisible(conversationId)) return false;
+    if (!safeSendWs({ action: "read_conversation", conversation_id: conversationId })) return false;
+    setConversations((previous) => previous.map((conversation) =>
+      conversation.id === conversationId && conversation.unread_count
+        ? { ...conversation, unread_count: 0 }
+        : conversation,
+    ));
+    return true;
+  };
+  const markVisibleReadRef = useRef(null);
+  markVisibleReadRef.current = () => markVisibleConversationRead(activeConvRef.current?.id);
+
+  useEffect(() => {
+    const refreshReadState = () => markVisibleReadRef.current();
+    document.addEventListener("visibilitychange", refreshReadState);
+    window.addEventListener("focus", refreshReadState);
+    window.addEventListener("resize", refreshReadState);
+    return () => {
+      document.removeEventListener("visibilitychange", refreshReadState);
+      window.removeEventListener("focus", refreshReadState);
+      window.removeEventListener("resize", refreshReadState);
+    };
+  }, []);
+
+  useEffect(() => {
+    markVisibleReadRef.current();
+  }, [compactChatOpen, compactNavigationOpen, showInspector, wsConnected, blockStateReady]);
 
   activeConvRef.current = activeConv;
   conversationsRef.current = conversations;
@@ -974,7 +1180,7 @@ export default function ChatDashboard({ user, onLogout }) {
       return null;
     });
     if (fileInputRef.current) fileInputRef.current.value = "";
-    setMessageText("");
+    setEditText("");
     setShowEmojiPicker(false);
     clearTimeout(typingTimeoutRef.current);
     const recorder = mediaRecorderRef.current;
@@ -1015,6 +1221,8 @@ export default function ChatDashboard({ user, onLogout }) {
   const t = THEME[theme];
 
   const scrollToBottom = (smooth = true) => {
+    followLatestRef.current = true;
+    unseenMessageIdsRef.current = new Set();
     messageEndRef.current?.scrollIntoView({
       behavior: smooth ? "smooth" : "auto",
     });
@@ -1028,11 +1236,14 @@ export default function ChatDashboard({ user, onLogout }) {
     if (!container) return;
     const distanceFromBottom =
       container.scrollHeight - container.scrollTop - container.clientHeight;
+    followLatestRef.current = distanceFromBottom <= 120;
     if (distanceFromBottom > 120) {
       setShowScrollBottomBtn(true);
     } else {
       setShowScrollBottomBtn(false);
+      unseenMessageIdsRef.current = new Set();
       setNewMessagesBelowCount(0);
+      markVisibleReadRef.current();
     }
   };
 
@@ -1040,23 +1251,29 @@ export default function ChatDashboard({ user, onLogout }) {
   useEffect(() => {
     const container = chatContainerRef.current;
     if (!container) return;
-    const distanceFromBottom =
-      container.scrollHeight - container.scrollTop - container.clientHeight;
-
-    // If close to bottom or initial load, auto scroll down
-    if (distanceFromBottom <= 180 || newMessagesBelowCount === 0) {
+    const arrivals = trackMessageArrivals(
+      messages, renderedMessageIdsRef.current, unseenMessageIdsRef.current,
+      user.userId, followLatestRef.current,
+    );
+    const previousMessageCount = renderedMessageIdsRef.current.size;
+    renderedMessageIdsRef.current = arrivals.currentIds;
+    unseenMessageIdsRef.current = arrivals.unseenIds;
+    if (followLatestRef.current && (arrivals.hasArrivals || messages.length > 0 && previousMessageCount === 0)) {
       scrollToBottom(true);
     } else {
-      setNewMessagesBelowCount((prev) => prev + 1);
+      setNewMessagesBelowCount(arrivals.unseenIds.size);
     }
-  }, [messages]);
+  }, [messages, user.userId]);
 
   // Load initial conversations list
   const loadConversations = async () => {
     const revision = dataRevisionRef.current;
+    const request = ++conversationRequestRef.current;
+    setConversationsLoading(true);
     try {
       const rawList = await conversationService.listConversations();
-      if (revision !== dataRevisionRef.current) return;
+      if (revision !== dataRevisionRef.current || request !== conversationRequestRef.current) return;
+      setConversationError(null);
       const normalized = rawList.map((c) => {
         const isGroup = c.type === "group";
         const other = c.other_participant;
@@ -1134,6 +1351,11 @@ export default function ChatDashboard({ user, onLogout }) {
       }
     } catch (err) {
       console.error("Failed to load conversations:", err);
+      if (revision === dataRevisionRef.current && request === conversationRequestRef.current) {
+        setConversationError("Could not load conversations.");
+      }
+    } finally {
+      if (request === conversationRequestRef.current) setConversationsLoading(false);
     }
   };
 
@@ -1148,13 +1370,30 @@ export default function ChatDashboard({ user, onLogout }) {
       const conversation = activeConvRef.current;
       setPinnedMessagesMap({});
       if (!conversation || conversation.id === "virtual-saved-messages") return;
+      const request = ++historyRequestRef.current;
+      setHistoryState({ loading: true, error: null });
       const [history, pins] = await Promise.allSettled([
         conversationService.getMessages(conversation.id),
         conversationService.getPinnedMessages(conversation.id),
       ]);
-      if (disposed || revision !== dataRevisionRef.current || activeConvRef.current?.id !== conversation.id) return;
+      if (
+        disposed ||
+        request !== historyRequestRef.current ||
+        revision !== dataRevisionRef.current ||
+        activeConvRef.current?.id !== conversation.id
+      )
+        return;
       if (history.status === "fulfilled") {
-        setMessages((history.value || []).map((message) => ({ ...message, id: message.message_id || message.id })));
+        loadedConversationRef.current = conversation.id;
+        setHistoryState({ loading: false, error: null });
+        setMessages(
+          (history.value || []).map((message) => ({
+            ...message,
+            id: message.message_id || message.id,
+          })),
+        );
+      } else {
+        setHistoryState({ loading: false, error: "Could not load messages." });
       }
       if (pins.status === "fulfilled") {
         setPinnedMessagesMap({ [conversation.id]: pins.value || [] });
@@ -1164,7 +1403,9 @@ export default function ChatDashboard({ user, onLogout }) {
     setViewingParticipantProfile(null);
     setParticipantContextMenu(null);
     setTypingUsers({});
-    return () => { disposed = true; };
+    return () => {
+      disposed = true;
+    };
   }, [blockRevision, blockStateReady]);
 
   // Periodic background sync loop every 5 seconds as a fail-safe backup for WebSockets
@@ -1190,7 +1431,11 @@ export default function ChatDashboard({ user, onLogout }) {
       if (!conv || !conv.id || conv.id === "virtual-saved-messages") return;
       try {
         const history = await conversationService.getMessages(conv.id);
-        if (revision !== dataRevisionRef.current || activeConvRef.current?.id !== conv.id) return;
+        if (
+          revision !== dataRevisionRef.current ||
+          activeConvRef.current?.id !== conv.id
+        )
+          return;
         if (!history || !history.length) return;
         const incoming = history.map((m) => ({
           ...m,
@@ -1262,17 +1507,36 @@ export default function ChatDashboard({ user, onLogout }) {
       // onMessage callback
       (data) => {
         if (data.event === "error") {
+          actionTrackerRef.current.fail(data.message || "The server rejected the action.");
           showError(data.message || "The server rejected the action.");
           return;
         }
+        actionTrackerRef.current.receive(data);
         if (data.event === "block_state_changed") {
           refreshBlockState();
           return;
         }
         const incoming = blockStateRef.current.incoming;
-        if (incoming.includes(String(data.user_id)) && ["typing_status", "user_status", "user_status_changed", "read_update", "message_delivered"].includes(data.event || data.action || data.type)) return;
-        const eventConversation = conversationsRef.current.find((conversation) => String(conversation.id) === String(data.conversation_id));
-        if (["read_update", "message_delivered"].includes(data.event) && directBlockPolicy(eventConversation, [], incoming).incoming) return;
+        if (
+          incoming.includes(String(data.user_id)) &&
+          [
+            "typing_status",
+            "user_status",
+            "user_status_changed",
+            "read_update",
+            "message_delivered",
+          ].includes(data.event || data.action || data.type)
+        )
+          return;
+        const eventConversation = conversationsRef.current.find(
+          (conversation) =>
+            String(conversation.id) === String(data.conversation_id),
+        );
+        if (
+          ["read_update", "message_delivered"].includes(data.event) &&
+          directBlockPolicy(eventConversation, [], incoming).incoming
+        )
+          return;
         if (data.event === "new_message") data = maskMessage(data, incoming);
         if (data.event === "new_message") {
           const isCurrentActive =
@@ -1280,10 +1544,12 @@ export default function ChatDashboard({ user, onLogout }) {
             String(activeConvRef.current.id).toLowerCase() ===
               String(data.conversation_id).toLowerCase();
 
-          if (data.sender_id !== user.userId && blockStateRef.current.ready) {
-            if (soundEnabled) {
-              playNotificationSound();
-            }
+          if (
+            data.sender_id !== user.userId &&
+            blockStateRef.current.ready &&
+            !isNotificationMuted(data.conversation_id)
+          ) {
+            playNotificationSound(data.conversation_id);
             if (
               "Notification" in window &&
               Notification.permission === "granted" &&
@@ -1341,9 +1607,10 @@ export default function ChatDashboard({ user, onLogout }) {
                   content: snippet,
                   status: "delivered",
                 },
-                unread_count: isCurrentActive || data.sender_id === user.userId
-                  ? 0
-                  : (existing.unread_count || 0) + 1,
+                unread_count:
+                  data.sender_id === user.userId
+                    ? existing.unread_count || 0
+                    : (existing.unread_count || 0) + 1,
               };
             }
 
@@ -1407,10 +1674,7 @@ export default function ChatDashboard({ user, onLogout }) {
               ];
             });
             // Mark conversation as read via WebSocket
-            safeSendWs({
-                action: "read_conversation",
-                conversation_id: activeConvRef.current.id,
-            });
+            markVisibleConversationRead(data.conversation_id);
           }
         } else if (data.event === "typing_status") {
           setTypingUsers((prev) => ({
@@ -1430,7 +1694,11 @@ export default function ChatDashboard({ user, onLogout }) {
           ) {
             setMessages((prev) => {
               return prev.map((m) => {
-                if (m.sender_id === user.userId && isConfirmedMessage(m) && m.status !== "read") {
+                if (
+                  m.sender_id === user.userId &&
+                  isConfirmedMessage(m) &&
+                  m.status !== "read"
+                ) {
                   return { ...m, status: "delivered" };
                 }
                 return m;
@@ -1505,6 +1773,12 @@ export default function ChatDashboard({ user, onLogout }) {
           );
         } else if (data.event === "message_deleted") {
           setMessages((prev) => prev.filter((m) => m.id !== data.message_id));
+          setPinnedMessagesMap((previous) => ({
+            ...previous,
+            [data.conversation_id]: (previous[data.conversation_id] || []).filter(
+              (pin) => String(pin.message_id || pin.id) !== String(data.message_id),
+            ),
+          }));
         } else if (data.event === "message_reacted") {
           setMessages((prev) =>
             prev.map((m) => {
@@ -1558,6 +1832,7 @@ export default function ChatDashboard({ user, onLogout }) {
             [data.conversation_id]: data.message_id,
           }));
         } else if (data.event === "message_unpinned") {
+          if (data.scope === "personal" && String(data.pinned_by_user_id) !== String(user.userId)) return;
           setPinnedMessagesMap((prev) => {
             const list = prev[data.conversation_id] || [];
             const filtered = list.filter(
@@ -1691,8 +1966,13 @@ export default function ChatDashboard({ user, onLogout }) {
       },
       // onClose callback
       () => {
+        actionTrackerRef.current.fail("Connection lost before confirmation. Check the refreshed conversation before retrying.");
         setWsConnected(false);
-        if (!disposed) reconnectTimer = setTimeout(() => setConnectionAttempt((attempt) => attempt + 1), 15000);
+        if (!disposed)
+          reconnectTimer = setTimeout(
+            () => setConnectionAttempt((attempt) => attempt + 1),
+            15000,
+          );
       },
       // onError callback
       () => setWsConnected(false),
@@ -1708,16 +1988,32 @@ export default function ChatDashboard({ user, onLogout }) {
   }, [user.token, connectionAttempt]);
 
   // Load messages when selecting active conversation
-  const handleSelectConversation = async (conv) => {
-    conv = conversationsRef.current.find((conversation) => conversation.id === conv.id) || conv;
+  const handleSelectConversation = async (conv, preserveMessages = false) => {
+    const request = ++historyRequestRef.current;
+    followLatestRef.current = true;
+    renderedMessageIdsRef.current = new Set();
+    unseenMessageIdsRef.current = new Set();
+    setNewMessagesBelowCount(0);
+    setShowScrollBottomBtn(false);
+    setCompactChatOpen(true);
+    setCompactNavigationOpen(false);
+    setShowInspector(false);
+    conv =
+      conversationsRef.current.find(
+        (conversation) => conversation.id === conv.id,
+      ) || conv;
     const revision = dataRevisionRef.current;
     activeConvRef.current = conv;
+    loadedConversationRef.current = null;
+    setActiveConv(conv);
+    if (!preserveMessages) setMessages([]);
+    setHistoryState({ loading: true, error: null });
     const currentUserId = user?.userId || user?.user_id;
     if (conv.id === "virtual-saved-messages") {
       try {
         const response =
           await conversationService.createConversation(currentUserId);
-        await loadConversations();
+        if (request !== historyRequestRef.current || revision !== dataRevisionRef.current) return;
 
         const realSelfConv = {
           id: response.conversation_id,
@@ -1726,84 +2022,93 @@ export default function ChatDashboard({ user, onLogout }) {
           avatar_url: null,
           other_participant: null,
         };
-        setActiveConv(realSelfConv);
-        setMessages([]);
-
-        const history = await conversationService.getMessages(
-          response.conversation_id,
-        );
-        const mapped = (history || []).map((m) => ({
-          ...m,
-          id: m.message_id || m.id,
-        }));
-        const uniqueMap = new Map();
-        mapped.forEach((m) => uniqueMap.set(m.id, m));
-        setMessages(Array.from(uniqueMap.values()));
+        conv = realSelfConv;
+        moveDraft("virtual-saved-messages", conv.id);
+        activeConvRef.current = conv;
+        setActiveConv(conv);
+        loadConversations();
       } catch (err) {
         console.error("Failed to lazy-create saved messages:", err);
+        if (request === historyRequestRef.current && revision === dataRevisionRef.current) {
+          setHistoryState({ loading: false, error: "Could not open Saved Messages." });
+        }
+        return;
       }
-      return;
     }
-
-    setActiveConv(conv);
-    setMessages([]);
-
-    // Clear unread count badge in sidebar
-    setConversations((prev) =>
-      prev.map((c) => (c.id === conv.id ? { ...c, unread_count: 0 } : c)),
-    );
 
     try {
       const history = await conversationService.getMessages(conv.id);
-      if (revision !== dataRevisionRef.current || activeConvRef.current?.id !== conv.id) return;
+      if (
+        request !== historyRequestRef.current ||
+        revision !== dataRevisionRef.current ||
+        activeConvRef.current?.id !== conv.id
+      )
+        return;
       const mapped = (history || []).map((m) => ({
         ...m,
         id: m.message_id || m.id,
       }));
       const uniqueMap = new Map();
       mapped.forEach((m) => uniqueMap.set(m.id, m));
-      setMessages(Array.from(uniqueMap.values()));
+      setMessages((previous) => [
+        ...uniqueMap.values(),
+        ...(preserveMessages ? previous.filter((message) => !isConfirmedMessage(message)) : []),
+      ]);
+      loadedConversationRef.current = conv.id;
+      setHistoryState({ loading: false, error: null });
 
       // Fetch pinned messages stack
       try {
         const pins = await conversationService.getPinnedMessages(conv.id);
-        if (Array.isArray(pins) && revision === dataRevisionRef.current && activeConvRef.current?.id === conv.id) {
+        if (
+          Array.isArray(pins) &&
+          request === historyRequestRef.current &&
+          revision === dataRevisionRef.current &&
+          activeConvRef.current?.id === conv.id
+        ) {
           setPinnedMessagesMap((prev) => ({ ...prev, [conv.id]: pins }));
         }
       } catch (e) {}
 
       // Read conversation notification
-      safeSendWs({
-          action: "read_conversation",
-          conversation_id: conv.id,
-      });
+      markVisibleConversationRead(conv.id);
     } catch (err) {
       console.error("Failed to load messages:", err);
+      if (request === historyRequestRef.current && revision === dataRevisionRef.current && activeConvRef.current?.id === conv.id) {
+        setHistoryState({ loading: false, error: "Could not load messages." });
+      }
     }
   };
 
   // User Search triggered reactively whenever query edits
   useEffect(() => {
     const query = searchQuery.trim();
+    let cancelled = false;
+    setSearchError(null);
+    setSearchResults([]);
     if (!query) {
-      setSearchResults([]);
+      setIsSearching(false);
       return;
     }
 
+    setIsSearching(true);
     const delayDebounceFn = setTimeout(async () => {
-      setIsSearching(true);
       try {
         const results = await userService.searchUsers(query);
-        setSearchResults(results);
+        if (!cancelled) setSearchResults(results);
       } catch (err) {
         console.error("Search failed:", err);
+        if (!cancelled) setSearchError("Could not search users.");
       } finally {
-        setIsSearching(false);
+        if (!cancelled) setIsSearching(false);
       }
     }, 300); // 300ms debounce to prevent API spam
 
-    return () => clearTimeout(delayDebounceFn);
-  }, [searchQuery, blockRevision]);
+    return () => {
+      cancelled = true;
+      clearTimeout(delayDebounceFn);
+    };
+  }, [searchQuery, blockRevision, searchAttempt]);
 
   const handleAvatarFileSelect = async (e) => {
     const file = e.target.files?.[0];
@@ -1813,10 +2118,13 @@ export default function ChatDashboard({ user, onLogout }) {
     try {
       const uploadRes = await conversationService.uploadFile(file);
       setMyProfile((prev) => ({ ...prev, avatar_url: uploadRes.url }));
+      setErrorToast(null);
     } catch (err) {
       console.error("Avatar upload failed:", err);
+      showError(err.message || "Could not upload your avatar. Please try again.");
     } finally {
       setIsUploadingAvatar(false);
+      e.target.value = "";
     }
   };
 
@@ -1835,12 +2143,14 @@ export default function ChatDashboard({ user, onLogout }) {
       });
       const freshProfile = await userService.getProfile();
       if (freshProfile) {
-        setMyProfile(freshProfile);
+        setMyProfile((current) => current === myProfile ? freshProfile : current);
       }
+      setErrorToast(null);
       setProfileSavedToast(true);
       setTimeout(() => setProfileSavedToast(false), 3000);
     } catch (err) {
       console.error("Failed to update profile:", err);
+      showError(err.message || "Could not save your profile. Your changes are still here.");
     } finally {
       setIsSavingProfile(false);
     }
@@ -1895,7 +2205,13 @@ export default function ChatDashboard({ user, onLogout }) {
         return;
       }
 
-      if (!blockPolicy(targetUserId, blockStateRef.current.outgoing, blockStateRef.current.incoming).canInteract) {
+      if (
+        !blockPolicy(
+          targetUserId,
+          blockStateRef.current.outgoing,
+          blockStateRef.current.incoming,
+        ).canInteract
+      ) {
         showError("Unblock this user before starting a direct chat.");
         return;
       }
@@ -1926,11 +2242,89 @@ export default function ChatDashboard({ user, onLogout }) {
     }
   };
 
+  // Uploads and sends each image as its own message, one at a time, updating a
+  // combined progress indicator. Stops early if cancelBatchSend() is called.
+  const sendImageBatch = async (files) => {
+    if (!canSendToConversation(activeConv)) return;
+    batchCancelRef.current = false;
+    const total = files.length;
+    let failedCount = 0;
+    setIsUploading(true);
+    for (let i = 0; i < total; i++) {
+      if (batchCancelRef.current) break;
+      const file = files[i];
+      setUploadProgress({
+        percentage: 0,
+        loadedFormatted: "0.0 MB",
+        totalFormatted: `${(file.size / (1024 * 1024)).toFixed(1)} MB`,
+        batchCurrent: i + 1,
+        batchTotal: total,
+      });
+      try {
+        const uploadRes = await conversationService.uploadFile(
+          file,
+          (progressInfo) => {
+            if (batchCancelRef.current) return;
+            setUploadProgress({
+              ...progressInfo,
+              batchCurrent: i + 1,
+              batchTotal: total,
+            });
+          },
+        );
+        if (batchCancelRef.current) break;
+        if (!canSendToConversation(activeConv)) break;
+        await sendOptimisticMessage(activeConv, {
+          content: "",
+          message_type: "image",
+          media_url: uploadRes.url,
+          reply_to_id: null,
+        });
+      } catch (err) {
+        console.error("Failed to send image in batch:", err);
+        failedCount += 1;
+      }
+    }
+    setIsUploading(false);
+    setUploadProgress({
+      percentage: 0,
+      loadedFormatted: "0 MB",
+      totalFormatted: "0 MB",
+    });
+    if (batchCancelRef.current) {
+      showError("Cancelled sending the remaining images.");
+    } else if (failedCount > 0) {
+      showError(
+        `${failedCount} of ${total} image${total === 1 ? "" : "s"} failed to send.`,
+      );
+    }
+  };
+
+  const cancelBatchSend = () => {
+    batchCancelRef.current = true;
+  };
+
   const handleFileSelect = (e) => {
     if (!canSendToConversation(activeConv)) return;
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(e.target.files || []);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+    if (files.length === 0) return;
+    try {
+      files.forEach(validateUploadSize);
+    } catch (error) {
+      showError(error.message);
+      return;
+    }
 
+    const allImages = files.every((f) => f.type.startsWith("image/"));
+    if (files.length > 1 && allImages) {
+      sendImageBatch(files);
+      return;
+    }
+
+    const file = files[0];
     setSelectedFile(file);
     if (file.type.startsWith("image/")) {
       const previewUrl = URL.createObjectURL(file);
@@ -1952,56 +2346,142 @@ export default function ChatDashboard({ user, onLogout }) {
   };
 
   // Send Message Workflow
-  const sendOptimisticMessage = async (conversation, payload) => {
+  const sendOptimisticMessage = async (conversation, payload, retryEntry = null) => {
     if (!canSendToConversation(conversation)) return;
+    const previous = retryEntry || outbox.entries.find((entry) =>
+      entry.conversation_id === conversation.id &&
+      JSON.stringify(entry.payload) === JSON.stringify(payload));
+    const clientId = previous?.client_id || crypto.randomUUID();
+    if (pendingSendIdsRef.current.has(clientId)) return;
+    pendingSendIdsRef.current.add(clientId);
     const localMsg = {
       ...payload,
-      id: `temp-${crypto.randomUUID()}`,
+      id: `temp-${clientId}`,
+      client_id: clientId,
+      conversation_id: conversation.id,
+      payload,
       sender_id: user.userId,
       sender_name: myProfile?.display_name || user.username,
       sender_avatar: myProfile?.avatar_url,
-      created_at: new Date().toISOString(),
+      created_at: previous?.created_at || new Date().toISOString(),
       status: "pending",
     };
     const token = user.token;
-    setMessages((prev) => [...prev, localMsg]);
+    outbox.put(localMsg);
+    if (activeConvRef.current?.id === conversation.id) {
+      setMessages((prev) => [...prev.filter((message) => message.id !== localMsg.id), localMsg]);
+    }
     setConversations((prev) => {
-      const updated = prev.map((conversationItem) => conversationItem.id === conversation.id ? {
-        ...conversationItem,
-        last_message_content: localMsg.content,
-        last_message_time: localMsg.created_at,
-        last_message: { ...localMsg, message_id: localMsg.id },
-      } : conversationItem);
-      const saved = updated.find((item) => item.id === "virtual-saved-messages" || (item.type === "direct" && !item.other_participant));
-      const sorted = updated.filter((item) => item !== saved).sort((first, second) =>
-        new Date(second.last_message_time || 0) - new Date(first.last_message_time || 0));
+      const updated = prev.map((conversationItem) =>
+        conversationItem.id === conversation.id
+          ? {
+              ...conversationItem,
+              last_message_content: localMsg.content,
+              last_message_time: localMsg.created_at,
+              last_message: { ...localMsg, message_id: localMsg.id },
+            }
+          : conversationItem,
+      );
+      const saved = updated.find(
+        (item) =>
+          item.id === "virtual-saved-messages" ||
+          (item.type === "direct" && !item.other_participant),
+      );
+      const sorted = updated
+        .filter((item) => item !== saved)
+        .sort(
+          (first, second) =>
+            new Date(second.last_message_time || 0) -
+            new Date(first.last_message_time || 0),
+        );
       return saved ? [saved, ...sorted] : sorted;
     });
     try {
-      const confirmation = await conversationService.sendMessage(conversation.id, payload);
-      if (!confirmation?.message_id) throw new Error("Message confirmation was missing. Check history before retrying.");
+      const confirmation = await conversationService.sendMessage(
+        conversation.id,
+        { ...payload, client_message_id: clientId },
+      );
+      if (confirmation?.message_id !== clientId)
+        throw new Error(
+          "Message confirmation was missing. Check history before retrying.",
+        );
       if (blockStateRef.current.token !== token) return;
+      outbox.remove(clientId);
       if (activeConvRef.current?.id === conversation.id) {
-        setMessages((prev) => confirmOutgoingMessage(prev, localMsg.id, confirmation));
+        setMessages((prev) =>
+          confirmOutgoingMessage(prev, localMsg.id, confirmation),
+        );
       }
-      setConversations((prev) => prev.map((item) => item.id === conversation.id && item.last_message?.message_id === localMsg.id ? {
-        ...item,
-        last_message: { ...item.last_message, id: confirmation.message_id, message_id: confirmation.message_id, status: confirmation.status },
-      } : item));
+      setConversations((prev) =>
+        prev.map((item) =>
+          item.id === conversation.id &&
+          item.last_message?.message_id === localMsg.id
+            ? {
+                ...item,
+                last_message: {
+                  ...item.last_message,
+                  id: confirmation.message_id,
+                  message_id: confirmation.message_id,
+                  status: confirmation.status,
+                },
+              }
+            : item,
+        ),
+      );
+      return true;
     } catch (error) {
       if (blockStateRef.current.token !== token) return;
+      outbox.put({ ...localMsg, status: "failed", error: error.message });
       if (activeConvRef.current?.id === conversation.id) {
         setMessages((prev) => failOutgoingMessage(prev, localMsg.id));
       }
-      setConversations((prev) => prev.map((item) => item.id === conversation.id && item.last_message?.message_id === localMsg.id ? {
-        ...item, last_message: { ...item.last_message, status: "failed" },
-      } : item));
+      setConversations((prev) =>
+        prev.map((item) =>
+          item.id === conversation.id &&
+          item.last_message?.message_id === localMsg.id
+            ? {
+                ...item,
+                last_message: { ...item.last_message, status: "failed" },
+              }
+            : item,
+        ),
+      );
       throw error;
+    } finally {
+      pendingSendIdsRef.current.delete(clientId);
     }
+  };
+
+  const handleRetryMessage = async (message) => {
+    if (!activeConv || message.conversation_id !== activeConv.id) return;
+    if (!canSendToConversation(activeConv)) {
+      showError("Messaging is unavailable in this conversation.");
+      return;
+    }
+    const clearDraft = captureDraft(activeConv.id);
+    const matchesDraft = message.payload.content === (drafts[activeConv.id] || "");
+    try {
+      if (await sendOptimisticMessage(activeConv, message.payload, message)) {
+        if (matchesDraft) clearDraft();
+      }
+    } catch (error) { showError(error.message || "Could not retry the message."); }
+  };
+
+  const handleDiscardMessage = (message) => {
+    if (pendingSendIdsRef.current.has(message.client_id)) return;
+    outbox.remove(message.client_id);
+    setMessages((previous) => previous.filter((item) => item.id !== message.id));
+    loadConversations();
+  };
+
+  const handleCopyFailedMessage = async (message) => {
+    try { await navigator.clipboard.writeText(message.content || message.media_url || ""); }
+    catch { showError("Could not copy the message."); }
   };
 
   const handleSendMessage = async (e) => {
     if (e) e.preventDefault();
+    if (sendingMessageRef.current) return;
 
     const hasText = messageText.trim().length > 0;
     if (!selectedFile && !hasText) return;
@@ -2014,30 +2494,20 @@ export default function ChatDashboard({ user, onLogout }) {
 
     // If editing an existing message
     if (editingMessage) {
-      if (!socketRef.current) return;
-      socketRef.current.send(
-        JSON.stringify({
+      sendMessageAction({
           action: "edit_message",
+          conversation_id: activeConv.id,
           message_id: editingMessage.id,
           content: messageText.trim(),
-        }),
-      );
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === editingMessage.id
-            ? { ...m, content: messageText.trim(), is_edited: true }
-            : m,
-        ),
-      );
-      setEditingMessage(null);
-      setMessageText("");
-      handleStopTypingNotification();
+      });
       return;
     }
 
     let mType = "text";
     let mediaUrl = null;
     let finalContent = messageText;
+    const clearSentDraft = captureDraft(activeConv.id);
+    sendingMessageRef.current = true;
 
     setIsUploading(true);
     setUploadProgress({
@@ -2070,26 +2540,42 @@ export default function ChatDashboard({ user, onLogout }) {
       const currentReplyToId = replyingTo?.id || null;
       if (!canSendToConversation(activeConv)) return;
 
+      if (selectedFile && activeConvRef.current?.id === activeConv.id) {
+        setSelectedFile((current) => current === selectedFile ? null : current);
+        setFilePreview((current) => {
+          if (current !== filePreview) return current;
+          if (current?.startsWith("blob:")) URL.revokeObjectURL(current);
+          return null;
+        });
+      }
+
       const sending = sendOptimisticMessage(activeConv, {
         content: finalContent,
         message_type: mType,
         media_url: mediaUrl,
         reply_to_id: currentReplyToId,
       });
-      setReplyingTo(null);
-
-      // Clear selected file & input
-      cancelAttachment();
-      setMessageText("");
       handleStopTypingNotification();
-      await sending;
+      const confirmed = await sending;
+      if (confirmed) {
+        clearSentDraft();
+        if (activeConvRef.current?.id === activeConv.id) {
+          setReplyingTo((current) => current === replyingTo ? null : current);
+          setSelectedFile((current) => current === selectedFile ? null : current);
+          setFilePreview((current) => {
+            if (current !== filePreview) return current;
+            if (current?.startsWith("blob:")) URL.revokeObjectURL(current);
+            return null;
+          });
+        }
+      }
     } catch (err) {
       console.error("Failed to send message / upload file:", err);
       showError(err.message || "Failed to send message. Please try again.");
     } finally {
+      sendingMessageRef.current = false;
       setIsUploading(false);
     }
-
   };
 
   // Context Menu & Message Action Handlers
@@ -2123,7 +2609,9 @@ export default function ChatDashboard({ user, onLogout }) {
     setReplyingTo({
       id: msg.id || msg.message_id,
       sender_id: msg.sender_id,
-      senderName: isBlockedBy(msg.sender_id) ? UNAVAILABLE_NAME : msg.sender_name || senderName,
+      senderName: isBlockedBy(msg.sender_id)
+        ? UNAVAILABLE_NAME
+        : msg.sender_name || senderName,
       content: previewContent,
     });
     handleCloseContextMenu();
@@ -2135,24 +2623,14 @@ export default function ChatDashboard({ user, onLogout }) {
       id: msg.id || msg.message_id,
       content: msg.content,
     });
-    setMessageText(msg.content || "");
+    setEditText(msg.content || "");
     handleCloseContextMenu();
   };
 
   const handleDeleteMsg = (msg) => {
     if (!canSendToConversation(activeConv)) return;
     const targetId = msg.id || msg.message_id;
-    if (socketRef.current) {
-      socketRef.current.send(
-        JSON.stringify({
-          action: "delete_message",
-          message_id: targetId,
-        }),
-      );
-    }
-    setMessages((prev) =>
-      prev.filter((m) => (m.id || m.message_id) !== targetId),
-    );
+    sendMessageAction({ action: "delete_message", conversation_id: activeConv.id, message_id: targetId });
     handleCloseContextMenu();
   };
 
@@ -2196,6 +2674,12 @@ export default function ChatDashboard({ user, onLogout }) {
         const file = item.getAsFile();
         if (file) {
           e.preventDefault();
+          try {
+            validateUploadSize(file);
+          } catch (error) {
+            showError(error.message);
+            return;
+          }
           setSelectedFile(file);
           if (file.type.startsWith("image/")) {
             const reader = new FileReader();
@@ -2216,38 +2700,12 @@ export default function ChatDashboard({ user, onLogout }) {
     if (!activeConv || !canSendToConversation(activeConv)) return;
     const msgId = String(msg.id || msg.message_id || "");
 
-    safeSendWs({
+    sendMessageAction({
       action: "react_message",
       conversation_id: String(activeConv.id),
       message_id: msgId,
       emoji: String(emoji),
     });
-
-    setMessages((prev) =>
-      prev.map((m) => {
-        if ((m.id || m.message_id) === msgId) {
-          const existingReactions = { ...(m.reactions || {}) };
-          const userList = existingReactions[emoji]
-            ? [...existingReactions[emoji]]
-            : [];
-          const userIndex = userList.indexOf(user.userId);
-
-          if (userIndex > -1) {
-            userList.splice(userIndex, 1);
-          } else {
-            userList.push(user.userId);
-          }
-
-          if (userList.length === 0) {
-            delete existingReactions[emoji];
-          } else {
-            existingReactions[emoji] = userList;
-          }
-          return { ...m, reactions: existingReactions };
-        }
-        return m;
-      }),
-    );
 
     handleCloseContextMenu();
   };
@@ -2284,32 +2742,13 @@ export default function ChatDashboard({ user, onLogout }) {
   const executePin = (msg, scope = "shared", notify = true) => {
     if (!activeConv || !msg || !canSendToConversation(activeConv)) return;
     const msgId = String(msg.id || msg.message_id || "");
-    safeSendWs({
+    if (!sendMessageAction({
       action: "pin_message",
       conversation_id: String(activeConv.id),
       message_id: msgId,
       scope,
       notify,
-    });
-
-    const pinObj = {
-      ...msg,
-      message_id: msgId,
-      conversation_id: String(activeConv.id),
-      scope,
-      notify,
-      pinned_by_user_id: user.userId,
-    };
-
-    setPinnedMessagesMap((prev) => ({
-      ...prev,
-      [activeConv.id]: [
-        pinObj,
-        ...(prev[activeConv.id] || []).filter(
-          (p) => String(p.message_id || p.id) !== msgId,
-        ),
-      ],
-    }));
+    })) return;
 
     setPinScopePromptMsg(null);
     setPinNotifyStep(false);
@@ -2319,18 +2758,15 @@ export default function ChatDashboard({ user, onLogout }) {
   const handleUnpin = (msg) => {
     if (!activeConv || !msg || !canSendToConversation(activeConv)) return;
     const msgId = String(msg.id || msg.message_id || "");
-    safeSendWs({
+    const pinned = (pinnedMessagesMap[activeConv.id] || []).find(
+      (pin) => String(pin.message_id || pin.id) === msgId,
+    );
+    sendMessageAction({
       action: "unpin_message",
       conversation_id: String(activeConv.id),
       message_id: msgId,
+      scope: pinned?.scope || msg.scope || "shared",
     });
-
-    setPinnedMessagesMap((prev) => ({
-      ...prev,
-      [activeConv.id]: (prev[activeConv.id] || []).filter(
-        (p) => String(p.message_id || p.id) !== msgId,
-      ),
-    }));
     handleCloseContextMenu();
   };
 
@@ -2366,7 +2802,8 @@ export default function ChatDashboard({ user, onLogout }) {
 
   // Send typing status to WebSocket Node
   const handleKeyPress = () => {
-    if (!activeConv || !socketRef.current || !canSendToConversation(activeConv)) return;
+    if (!activeConv || !socketRef.current || !canSendToConversation(activeConv))
+      return;
 
     // Broadcast active typing status
     socketRef.current.send(
@@ -2383,7 +2820,8 @@ export default function ChatDashboard({ user, onLogout }) {
   };
 
   const handleStopTypingNotification = () => {
-    if (!activeConv || !socketRef.current || !canSendToConversation(activeConv)) return;
+    if (!activeConv || !socketRef.current || !canSendToConversation(activeConv))
+      return;
     socketRef.current.send(
       JSON.stringify({
         action: "typing",
@@ -2436,8 +2874,30 @@ export default function ChatDashboard({ user, onLogout }) {
   return (
     <div
       className={`ht-app-container ${theme === "dark" ? "ht-dark-theme" : "ht-light-theme"}`}
+      data-compact-view={compactNavigationOpen ? "navigation" : showInspector && activeConv ? "details" : compactChatOpen && activeConv ? "chat" : "list"}
       style={{ background: t.chatBg, color: t.text }}
     >
+      <div className="ht-compact-header" style={{ background: t.sidebarBg, borderBottom: t.border }}>
+        {compactNavigationOpen || showInspector || (compactChatOpen && activeConv) ? (
+          <button
+            type="button"
+            aria-label={compactNavigationOpen ? "Back to inbox" : showInspector ? "Back to conversation" : "Back to conversations"}
+            title="Back"
+            onClick={() => {
+              if (compactNavigationOpen) setCompactNavigationOpen(false);
+              else if (showInspector) setShowInspector(false);
+              else setCompactChatOpen(false);
+            }}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M19 12H5m7-7-7 7 7 7" /></svg>
+          </button>
+        ) : (
+          <button type="button" aria-label="Open navigation" title="Open navigation" onClick={() => setCompactNavigationOpen(true)}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
+          </button>
+        )}
+        <span>{compactNavigationOpen ? "Navigation" : showInspector && activeConv ? "Conversation details" : "FlowChat"}</span>
+      </div>
       {errorToast && (
         <div
           style={{
@@ -2502,7 +2962,12 @@ export default function ChatDashboard({ user, onLogout }) {
       <NavigationRail
         isRailExpanded={isRailExpanded}
         toggleRailExpanded={toggleRailExpanded}
-        setActiveRailTab={setActiveRailTab}
+        setActiveRailTab={(tab) => {
+          setActiveRailTab(tab);
+          setCompactNavigationOpen(false);
+          setCompactChatOpen(false);
+          setShowInspector(false);
+        }}
         activeRailTab={activeRailTab}
         myProfile={myProfile}
         user={user}
@@ -2511,6 +2976,12 @@ export default function ChatDashboard({ user, onLogout }) {
 
       {/* 2. Conversations / Settings / Profile Sidebar */}
       <ConversationList
+        drafts={drafts}
+        conversationError={conversationError}
+        conversationsLoading={conversationsLoading}
+        onRetryConversations={loadConversations}
+        searchError={searchError}
+        onRetrySearch={() => setSearchAttempt((previous) => previous + 1)}
         leftSidebarWidth={leftSidebarWidth}
         themeTokens={t}
         theme={theme}
@@ -2527,7 +2998,13 @@ export default function ChatDashboard({ user, onLogout }) {
         convoTab={convoTab}
         setConvoTab={setConvoTab}
         isSearching={isSearching}
-        searchResults={blockStateReady ? searchResults.filter((participant) => !isBlockedBy(participantId(participant))) : []}
+        searchResults={
+          blockStateReady
+            ? searchResults.filter(
+                (participant) => !isBlockedBy(participantId(participant)),
+              )
+            : []
+        }
         handleStartConversation={handleStartConversation}
         setIsCreateGroupOpen={setIsCreateGroupOpen}
         myProfile={myProfile}
@@ -2549,6 +3026,13 @@ export default function ChatDashboard({ user, onLogout }) {
 
       {/* 3. Center Messaging Pane */}
       <ChatArea
+        handleRetryMessage={handleRetryMessage}
+        handleDiscardMessage={handleDiscardMessage}
+        handleCopyFailedMessage={handleCopyFailedMessage}
+        historyError={historyState.error}
+        historyLoading={historyState.loading}
+        onRetryHistory={() => handleSelectConversation(activeConvRef.current, true)}
+        pendingMessageAction={pendingMessageAction}
         activeConv={activeConvForDisplay}
         blockedByUser={activeBlockPolicy.incoming}
         blockedUser={activeBlockPolicy.outgoing}
@@ -2619,6 +3103,7 @@ export default function ChatDashboard({ user, onLogout }) {
         isUploading={isUploading}
         setIsUploading={setIsUploading}
         uploadProgress={uploadProgress}
+        cancelBatchSend={cancelBatchSend}
         fileInputRef={fileInputRef}
         inputTextareaRef={inputTextareaRef}
         messageText={messageText}
@@ -2654,7 +3139,13 @@ export default function ChatDashboard({ user, onLogout }) {
         setViewingParticipantProfile={setViewingParticipantProfile}
         mutedConvIds={mutedConvIds}
         toggleMuteConversation={toggleMuteConversation}
-        setIsInChatSearchOpen={setIsInChatSearchOpen}
+        setIsInChatSearchOpen={(open) => {
+          setIsInChatSearchOpen(open);
+          if (open && window.matchMedia("(max-width: 1100px)").matches) {
+            setShowInspector(false);
+            setCompactChatOpen(true);
+          }
+        }}
         setInChatSearchQuery={setInChatSearchQuery}
         setInChatSearchMatchIndex={setInChatSearchMatchIndex}
         isUserGroupAdmin={isUserGroupAdmin}
@@ -2769,39 +3260,41 @@ export default function ChatDashboard({ user, onLogout }) {
               @{viewingParticipantProfile.username}
             </div>
 
-            {!viewingParticipantProfile.identity_hidden && <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                marginTop: 12,
-                padding: "4px 12px",
-                background: "rgba(120, 120, 120, 0.08)",
-                borderRadius: 12,
-                fontSize: 12,
-                color:
-                  viewingParticipantProfile.status === "online"
-                    ? "#34A853"
-                    : t.textMuted,
-              }}
-            >
-              <span
+            {!viewingParticipantProfile.identity_hidden && (
+              <div
                 style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: "50%",
-                  background:
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  marginTop: 12,
+                  padding: "4px 12px",
+                  background: "rgba(120, 120, 120, 0.08)",
+                  borderRadius: 12,
+                  fontSize: 12,
+                  color:
                     viewingParticipantProfile.status === "online"
                       ? "#34A853"
                       : t.textMuted,
                 }}
-              />
-              {viewingParticipantProfile.status === "online"
-                ? "Active Now"
-                : viewingParticipantProfile.last_seen
-                  ? `Last seen ${formatLastSeen(viewingParticipantProfile.last_seen)}`
-                  : "Offline"}
-                </div>}
+              >
+                <span
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: "50%",
+                    background:
+                      viewingParticipantProfile.status === "online"
+                        ? "#34A853"
+                        : t.textMuted,
+                  }}
+                />
+                {viewingParticipantProfile.status === "online"
+                  ? "Active Now"
+                  : viewingParticipantProfile.last_seen
+                    ? `Last seen ${formatLastSeen(viewingParticipantProfile.last_seen)}`
+                    : "Offline"}
+              </div>
+            )}
 
             <div
               style={{ width: "100%", display: "flex", gap: 12, marginTop: 24 }}
@@ -2887,12 +3380,20 @@ export default function ChatDashboard({ user, onLogout }) {
         setIsCreateGroupOpen={setIsCreateGroupOpen}
         groupTitle={groupTitle}
         setGroupTitle={setGroupTitle}
-        selectedGroupMembers={selectedGroupMembers.map((participant) => maskParticipant(participant, blockedByUserIds))}
+        selectedGroupMembers={selectedGroupMembers.map((participant) =>
+          maskParticipant(participant, blockedByUserIds),
+        )}
         setSelectedGroupMembers={setSelectedGroupMembers}
         handleRemoveGroupMember={handleRemoveGroupMember}
         groupSearchQuery={groupSearchQuery}
         setGroupSearchQuery={setGroupSearchQuery}
-        groupSearchResults={blockStateReady ? groupSearchResults.filter((participant) => !isBlockedBy(participantId(participant))) : []}
+        groupSearchResults={
+          blockStateReady
+            ? groupSearchResults.filter(
+                (participant) => !isBlockedBy(participantId(participant)),
+              )
+            : []
+        }
         handleSelectGroupMember={handleSelectGroupMember}
         handleCreateGroupSubmit={handleCreateGroupSubmit}
         isCreatingGroup={isCreatingGroup}
@@ -2904,7 +3405,13 @@ export default function ChatDashboard({ user, onLogout }) {
         setIsAddMemberOpen={setIsAddMemberOpen}
         addMemberQuery={addMemberQuery}
         setAddMemberQuery={setAddMemberQuery}
-        addMemberResults={blockStateReady ? addMemberResults.filter((participant) => !isBlockedBy(participantId(participant))) : []}
+        addMemberResults={
+          blockStateReady
+            ? addMemberResults.filter(
+                (participant) => !isBlockedBy(participantId(participant)),
+              )
+            : []
+        }
         handleAddMemberToGroup={handleAddMemberToGroup}
         themeTokens={t}
       />

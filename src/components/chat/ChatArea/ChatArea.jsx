@@ -1,6 +1,10 @@
+import LoadFeedback from "../../LoadFeedback";
 import { useState } from "react";
 import EmojiPicker from "emoji-picker-react";
 import VoicePlayer from "../../VoicePlayer";
+import ImageLightbox from "../ImageLightbox";
+import { expireSession } from "../../../services/session.js";
+import { validateUploadSize, UPLOAD_REJECTED_ERROR } from "../../../utils/uploadLimits.js";
 import {
   formatTime,
   renderMessageStatus,
@@ -10,6 +14,13 @@ import {
 } from "../../../utils/theme";
 
 export default function ChatArea({
+  pendingMessageAction = null,
+  handleRetryMessage,
+  handleDiscardMessage,
+  handleCopyFailedMessage,
+  historyError = null,
+  historyLoading = false,
+  onRetryHistory,
   activeConv,
   blockedByUser = false,
   blockedUser = false,
@@ -80,6 +91,7 @@ export default function ChatArea({
   isUploading,
   setIsUploading,
   uploadProgress,
+  cancelBatchSend,
   fileInputRef,
   inputTextareaRef,
   messageText,
@@ -100,7 +112,11 @@ export default function ChatArea({
   API_BASE,
 }) {
   const [activePinIndex, setActivePinIndex] = useState(0);
+  const [lightboxIndex, setLightboxIndex] = useState(null);
   const typingColor = theme === "dark" ? "#38bdf8" : t.accent;
+  const imageMessages = (messages || []).filter(
+    (m) => m.message_type === "image" && (m.media_url || m.file_url),
+  );
 
   if (!activeConv) {
     return (
@@ -155,6 +171,12 @@ export default function ChatArea({
 
   return (
     <div className="ht-chat-pane">
+      <LoadFeedback error={historyError} loading={historyLoading} label="Messages" onRetry={onRetryHistory} themeTokens={t} />
+      {pendingMessageAction && (
+        <div role="status" style={{ padding: "8px 16px", color: t.text, background: t.cardBg, fontSize: 12 }}>
+          Waiting for server confirmation: {pendingMessageAction.action.replaceAll("_", " ")}...
+        </div>
+      )}
       {/* Floating Header Card */}
       <div
         className="ht-chat-header"
@@ -496,24 +518,40 @@ export default function ChatArea({
                   backdropFilter: "blur(12px)",
                 }}
               >
-                {activeConv.type === "direct" && activeConv.other_participant && (blockedUser || !blockedByUser) && (
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      try {
-                        const userId = activeConv.other_participant.user_id || activeConv.other_participant.id;
-                        if (blockedUser) await handleUnblockUser(userId);
-                        else await handleBlockUser(userId);
-                        setIsHeaderMenuOpen(false);
-                      } catch (error) {
-                        showError(error.message || "Failed to update block state.");
-                      }
-                    }}
-                    style={{ width: "100%", padding: "8px 12px", background: "none", border: "none", color: "#ef4444", fontSize: 13, borderRadius: 8, cursor: "pointer", textAlign: "left" }}
-                  >
-                    {blockedUser ? "Unblock User" : "Block User"}
-                  </button>
-                )}
+                {activeConv.type === "direct" &&
+                  activeConv.other_participant &&
+                  (blockedUser || !blockedByUser) && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          const userId =
+                            activeConv.other_participant.user_id ||
+                            activeConv.other_participant.id;
+                          if (blockedUser) await handleUnblockUser(userId);
+                          else await handleBlockUser(userId);
+                          setIsHeaderMenuOpen(false);
+                        } catch (error) {
+                          showError(
+                            error.message || "Failed to update block state.",
+                          );
+                        }
+                      }}
+                      style={{
+                        width: "100%",
+                        padding: "8px 12px",
+                        background: "none",
+                        border: "none",
+                        color: "#ef4444",
+                        fontSize: 13,
+                        borderRadius: 8,
+                        cursor: "pointer",
+                        textAlign: "left",
+                      }}
+                    >
+                      {blockedUser ? "Unblock User" : "Block User"}
+                    </button>
+                  )}
                 {activeConv.type === "group" && (
                   <button
                     type="button"
@@ -936,12 +974,13 @@ export default function ChatArea({
                           objectFit: "cover",
                           cursor: "pointer",
                         }}
-                        onClick={() =>
-                          window.open(
-                            getAssetUrl(m.media_url || m.file_url),
-                            "_blank",
-                          )
-                        }
+                        onClick={() => {
+                          const msgKey = m.id || m.message_id;
+                          const idx = imageMessages.findIndex(
+                            (im) => (im.id || im.message_id) === msgKey,
+                          );
+                          setLightboxIndex(idx === -1 ? 0 : idx);
+                        }}
                       />
                       {m.content &&
                         m.content !==
@@ -1211,8 +1250,20 @@ export default function ChatArea({
                       (edited)
                     </span>
                   )}
-                  {isSelf && !blockedByUser && renderMessageStatus(m.status, false)}
+                  {isSelf &&
+                    !blockedByUser &&
+                    renderMessageStatus(m.status, false)}
                 </span>
+                {isSelf && m.status === "failed" && m.client_id && !blockedByUser && (
+                  <div style={{ maxWidth: "100%", fontSize: 12, color: t.textMuted, overflowWrap: "anywhere" }}>
+                    <div role="alert">{m.error || "Send not confirmed."}</div>
+                    <div className="ht-failed-message-actions" style={{ display: "flex", flexWrap: "wrap", gap: 8, color: t.accent }}>
+                      <button type="button" disabled={directReadOnly} onClick={() => handleRetryMessage(m)} aria-label="Retry failed message">Retry</button>
+                      <button type="button" onClick={() => handleCopyFailedMessage(m)} aria-label="Copy failed message">Copy</button>
+                      <button type="button" onClick={() => handleDiscardMessage(m)} aria-label="Discard failed message">Discard</button>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           );
@@ -1501,7 +1552,9 @@ export default function ChatArea({
             fontWeight: 600,
           }}
         >
-          {blockedUser ? "Unblock this user to send messages" : "You can't message this user"}
+          {blockedUser
+            ? "Unblock this user to send messages"
+            : "You can't message this user"}
         </div>
       ) : (
         <form className="ht-chat-input-form" onSubmit={handleSendMessage}>
@@ -1610,7 +1663,6 @@ export default function ChatArea({
                 type="button"
                 onClick={() => {
                   setEditingMessage(null);
-                  setMessageText("");
                 }}
                 style={{
                   background: "none",
@@ -1758,13 +1810,34 @@ export default function ChatArea({
                     className="flowchat-beacon-dot"
                     style={{ width: 6, height: 6, margin: 0 }}
                   ></span>
-                  Uploading attachment...
+                  {uploadProgress.batchTotal
+                    ? `Sending ${uploadProgress.batchCurrent} of ${uploadProgress.batchTotal}...`
+                    : "Uploading attachment..."}
                 </span>
                 <span
                   style={{ fontSize: 11, fontWeight: 700, color: "#38bdf8" }}
                 >
                   {uploadProgress.loadedFormatted} /{" "}
                   {uploadProgress.totalFormatted} • {uploadProgress.percentage}%
+                  {uploadProgress.batchTotal ? (
+                    <button
+                      type="button"
+                      onClick={cancelBatchSend}
+                      style={{
+                        marginLeft: 8,
+                        border: "none",
+                        background: "rgba(229, 62, 62, 0.15)",
+                        color: "#e53e3e",
+                        borderRadius: 6,
+                        fontSize: 10,
+                        fontWeight: 700,
+                        padding: "2px 6px",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  ) : null}
                 </span>
               </div>
               <div className="ht-upload-progress-container">
@@ -1799,6 +1872,7 @@ export default function ChatArea({
             </svg>
 
             <textarea
+              disabled={pendingMessageAction?.action === "edit_message"}
               ref={inputTextareaRef}
               rows={1}
               placeholder={
@@ -2019,6 +2093,7 @@ export default function ChatArea({
 
                           setIsUploading(true);
                           try {
+                            validateUploadSize(blob);
                             const fd = new FormData();
                             fd.append("file", blob, `voice_${Date.now()}.webm`);
                             const token = localStorage.getItem("chat_token");
@@ -2027,6 +2102,8 @@ export default function ChatArea({
                               headers: { Authorization: `Bearer ${token}` },
                               body: fd,
                             });
+                            if (res.status === 401) expireSession(token);
+                            if (res.status === 413) throw new Error(UPLOAD_REJECTED_ERROR);
                             if (!res.ok) throw new Error("Voice upload failed");
                             const data = await res.json();
                             if (data.url && canSendToConversation(activeConv)) {
@@ -2039,7 +2116,9 @@ export default function ChatArea({
                             }
                           } catch (err) {
                             console.error("Voice upload failed:", err);
-                            showError?.(err.message || "Failed to send voice message.");
+                            showError?.(
+                              err.message || "Failed to send voice message.",
+                            );
                           } finally {
                             setIsUploading(false);
                           }
@@ -2165,10 +2244,23 @@ export default function ChatArea({
       )}
       <input
         type="file"
+        multiple
         ref={fileInputRef}
         onChange={handleFileSelect}
         style={{ display: "none" }}
       />
+      {lightboxIndex !== null && imageMessages.length > 0 && (
+        <ImageLightbox
+          images={imageMessages.map((im) => ({
+            id: im.id || im.message_id,
+            src: getAssetUrl(im.media_url || im.file_url),
+            caption: im.content,
+          }))}
+          startIndex={Math.min(lightboxIndex, imageMessages.length - 1)}
+          onClose={() => setLightboxIndex(null)}
+          t={t}
+        />
+      )}
     </div>
   );
 }

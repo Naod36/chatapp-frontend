@@ -1,3 +1,4 @@
+import { MAX_UPLOAD_LABEL } from "../../utils/uploadLimits.js";
 export default function GeneralSettings({
     theme,
     setTheme,
@@ -180,7 +181,7 @@ export default function GeneralSettings({
                                 <div style={{ fontSize: 11, color: t.textMuted, marginTop: 2 }}>Maximum allowed media attachment payload</div>
                             </div>
                             <div style={{ fontSize: 11, fontWeight: 700, color: t.accent, background: "rgba(56, 189, 248, 0.1)", padding: "3px 8px", borderRadius: 4 }}>
-                                50 MB
+                                {MAX_UPLOAD_LABEL}
                             </div>
                         </div>
                     </div>

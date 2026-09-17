@@ -57,7 +57,9 @@ export default function ParticipantContextMenu({
           marginBottom: 4,
         }}
       >
-        {blockedBy ? "Person Not Available" : `@${participantContextMenu.participant.username}`}
+        {blockedBy
+          ? "Person Not Available"
+          : `@${participantContextMenu.participant.username}`}
       </div>
 
       {!isMe && !blocked && !blockedBy && (

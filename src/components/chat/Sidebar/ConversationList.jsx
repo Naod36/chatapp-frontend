@@ -5,8 +5,16 @@ import {
   getAssetUrl,
 } from "../../../utils/theme";
 import { apiFetch, API_BASE } from "../../../services/api";
+import LoadFeedback from "../../LoadFeedback";
+import { MAX_UPLOAD_LABEL } from "../../../utils/uploadLimits.js";
 
 export default function ConversationList({
+  drafts = {},
+  conversationError,
+  conversationsLoading,
+  onRetryConversations,
+  searchError,
+  onRetrySearch,
   leftSidebarWidth,
   themeTokens: t,
   theme,
@@ -44,6 +52,8 @@ export default function ConversationList({
 }) {
   const [latestRelease, setLatestRelease] = useState(null);
   const [isLoadingRelease, setIsLoadingRelease] = useState(false);
+  const unreadConversations = conversations.filter((conversation) => Number(conversation.unread_count) > 0);
+  const visibleConversations = convoTab === "unread" ? unreadConversations : conversations;
 
   useEffect(() => {
     if (activeRailTab === "download") {
@@ -200,7 +210,7 @@ export default function ConversationList({
             {/* Pinned Conversations Section (Rendered ABOVE Category Tabs) */}
             {!searchQuery.trim() &&
               (() => {
-                const pinnedList = conversations.filter((c) => isConvPinned(c));
+                const pinnedList = visibleConversations.filter((c) => isConvPinned(c));
                 if (pinnedList.length === 0) return null;
 
                 return (
@@ -431,7 +441,7 @@ export default function ConversationList({
                                   minWidth: 0,
                                 }}
                               >
-                                {!isTyping &&
+                                {!drafts[c.id]?.trim() && !isTyping &&
                                   c.last_message &&
                                   c.last_message.sender_id === user.userId &&
                                   renderMessageStatus(
@@ -444,7 +454,9 @@ export default function ConversationList({
                                     textOverflow: "ellipsis",
                                   }}
                                 >
-                                  {isTyping
+                                  {drafts[c.id]?.trim()
+                                    ? `Draft: ${drafts[c.id]}`
+                                    : isTyping
                                     ? "typing..."
                                     : isSaved
                                       ? "Personal notes cloud inbox"
@@ -489,6 +501,7 @@ export default function ConversationList({
                 <div
                   style={{
                     display: "flex",
+                    flexWrap: "wrap",
                     gap: 6,
                     padding: "8px 12px",
                     borderBottom: t.border,
@@ -499,6 +512,7 @@ export default function ConversationList({
                   <button
                     type="button"
                     onClick={() => setConvoTab("all")}
+                    aria-pressed={convoTab === "all"}
                     style={{
                       flex: 1,
                       background:
@@ -526,7 +540,24 @@ export default function ConversationList({
                   </button>
                   <button
                     type="button"
+                    aria-pressed={convoTab === "unread"}
+                    aria-label="Unread conversations"
+                    onClick={() => setConvoTab("unread")}
+                    style={{
+                      flex: 1, minWidth: "max-content", border: "none", borderRadius: 8,
+                      padding: "6px 8px", fontSize: 12, fontWeight: 800,
+                      background: convoTab === "unread" ? "rgba(56, 189, 248, 0.15)" : "transparent",
+                      color: convoTab === "unread" ? t.accent : t.textMuted,
+                      cursor: "pointer", whiteSpace: "nowrap",
+                    }}
+                  >
+                    Unread{unreadConversations.length > 0 ? ` (${unreadConversations.length})` : ""}
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setConvoTab("groups")}
+                    aria-label="Group conversations"
+                    aria-pressed={convoTab === "groups"}
                     style={{
                       flex: 1,
                       background:
@@ -575,7 +606,10 @@ export default function ConversationList({
           </div>
 
           <div className="ht-convo-list">
-            {isSearching ? (
+            {!searchQuery.trim() && <LoadFeedback error={conversationError} loading={conversationsLoading && (!conversations.length || Boolean(conversationError))} label="Conversations" onRetry={onRetryConversations} themeTokens={t} />}
+            {searchQuery.trim() && searchError ? (
+              <LoadFeedback error={searchError} loading={isSearching} label="Search" onRetry={onRetrySearch} themeTokens={t} />
+            ) : isSearching ? (
               <div
                 style={{
                   textAlign: "center",
@@ -855,7 +889,7 @@ export default function ConversationList({
                                 flex: 1,
                               }}
                             >
-                              {!isTyping &&
+                              {!drafts[c.id]?.trim() && !isTyping &&
                                 c.last_message &&
                                 c.last_message.sender_id === user.userId &&
                                 renderMessageStatus(
@@ -868,7 +902,9 @@ export default function ConversationList({
                                   textOverflow: "ellipsis",
                                 }}
                               >
-                                {isTyping
+                                {drafts[c.id]?.trim()
+                                  ? `Draft: ${drafts[c.id]}`
+                                  : isTyping
                                   ? "typing..."
                                   : c.last_message_content ||
                                     `${c.participants?.length || 0} members`}
@@ -896,7 +932,7 @@ export default function ConversationList({
                     );
                   })}
                 {conversations.filter((c) => c.type === "group").length ===
-                  0 && (
+                  0 && !conversationError && !conversationsLoading && (
                   <div
                     style={{
                       textAlign: "center",
@@ -923,9 +959,9 @@ export default function ConversationList({
                     gap: 5,
                   }}
                 >
-                  All Messages
+                  {convoTab === "unread" ? "Unread Conversations" : "All Messages"}
                 </div>
-                {conversations.map((c) => {
+                {visibleConversations.map((c) => {
                   const isActive = activeConv && activeConv.id === c.id;
                   const isSaved =
                     c.id === "virtual-saved-messages" ||
@@ -1135,7 +1171,7 @@ export default function ConversationList({
                               flex: 1,
                             }}
                           >
-                            {!isTyping &&
+                            {!drafts[c.id]?.trim() && !isTyping &&
                               c.last_message &&
                               c.last_message.sender_id === user.userId &&
                               renderMessageStatus(c.last_message.status, true)}
@@ -1145,7 +1181,9 @@ export default function ConversationList({
                                 textOverflow: "ellipsis",
                               }}
                             >
-                              {isTyping
+                              {drafts[c.id]?.trim()
+                                ? `Draft: ${drafts[c.id]}`
+                                : isTyping
                                 ? "typing..."
                                 : isSaved
                                   ? "Personal notes cloud inbox"
@@ -1176,7 +1214,7 @@ export default function ConversationList({
                     </div>
                   );
                 })}
-                {conversations.length === 0 && (
+                {visibleConversations.length === 0 && !conversationError && !conversationsLoading && (
                   <div
                     style={{
                       textAlign: "center",
@@ -1185,7 +1223,7 @@ export default function ConversationList({
                       fontSize: 11,
                     }}
                   >
-                    No messages yet.
+                    {convoTab === "unread" ? "All caught up." : "No messages yet."}
                   </div>
                 )}
               </>
@@ -1915,7 +1953,7 @@ export default function ConversationList({
                       borderRadius: 4,
                     }}
                   >
-                    50 MB
+                    {MAX_UPLOAD_LABEL}
                   </div>
                 </div>
               </div>

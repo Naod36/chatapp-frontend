@@ -139,6 +139,7 @@ const GoogleIcon = () => (
 );
 
 export default function AuthScreen({
+  initialError = null,
   onAuthSuccess,
   onForgotPassword,
   resetToken = null,
@@ -157,7 +158,7 @@ export default function AuthScreen({
     useState(false);
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState(initialError);
 
   // Google OAuth Handler
   const handleGoogleLogin = useGoogleLogin({

@@ -1,4 +1,5 @@
 import { apiFetch, uploadFileWithProgress } from "./api";
+import { validateUploadSize } from "../utils/uploadLimits.js";
 
 /**
  * Conversations Service
@@ -29,13 +30,15 @@ export const conversationService = {
   },
 
   async getMessages(conversationId) {
-    return apiFetch(`/conversations/${conversationId}/messages`);
+    return apiFetch(`/conversations/${conversationId}/messages?mark_read=false`);
   },
 
   async sendMessage(conversationId, message) {
-    return apiFetch(`/conversations/${conversationId}/messages`, {
-      method: "POST",
-      body: JSON.stringify(message),
+    const { client_message_id, ...payload } = message;
+    return apiFetch(`/conversations/${conversationId}/messages${client_message_id ? `/${client_message_id}` : ""}`, {
+      method: client_message_id ? "PUT" : "POST",
+      signal: AbortSignal.timeout(20000),
+      body: JSON.stringify(payload),
     });
   },
 
@@ -57,6 +60,7 @@ export const conversationService = {
   },
 
   async uploadFile(file, onProgress) {
+    validateUploadSize(file);
     if (onProgress) {
       return uploadFileWithProgress(file, onProgress);
     }

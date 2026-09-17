@@ -3,14 +3,26 @@ import { userService } from "../services/user";
 import { participantId } from "../utils/blocking.js";
 
 export default function useBlockState(token) {
-  const [state, setState] = useState({ token, outgoing: [], incoming: [], revision: 0, ready: false });
+  const [state, setState] = useState({
+    token,
+    outgoing: [],
+    incoming: [],
+    revision: 0,
+    ready: false,
+  });
   const stateRef = useRef(state);
   const refreshRef = useRef(() => Promise.resolve());
   const requestRef = useRef(0);
 
   if (stateRef.current.token !== token) {
     requestRef.current += 1;
-    stateRef.current = { token, outgoing: [], incoming: [], revision: 0, ready: false };
+    stateRef.current = {
+      token,
+      outgoing: [],
+      incoming: [],
+      revision: 0,
+      ready: false,
+    };
   }
 
   const publish = (next) => {
@@ -24,7 +36,11 @@ export default function useBlockState(token) {
     const current = stateRef.current;
     const outgoing = current.outgoing.filter((id) => id !== String(userId));
     if (blocked) outgoing.push(String(userId));
-    publish({ ...current, outgoing: outgoing.sort(), revision: current.revision + 1 });
+    publish({
+      ...current,
+      outgoing: outgoing.sort(),
+      revision: current.revision + 1,
+    });
   };
 
   useEffect(() => {
@@ -34,18 +50,39 @@ export default function useBlockState(token) {
     const refresh = async () => {
       if (disposed || stateRef.current.token !== token) return;
       const request = ++requestRef.current;
-      const isCurrent = () => !disposed && stateRef.current.token === token && request === requestRef.current;
+      const isCurrent = () =>
+        !disposed &&
+        stateRef.current.token === token &&
+        request === requestRef.current;
       try {
-        const [blocked, blockedBy] = await Promise.all([userService.getBlockedUsers(), userService.getBlockedByUsers()]);
+        const [blocked, blockedBy] = await Promise.all([
+          userService.getBlockedUsers(),
+          userService.getBlockedByUsers(),
+        ]);
         if (!isCurrent()) return;
-        const normalize = (items) => [...new Set((items || []).map((item) =>
-          String(typeof item === "object" ? participantId(item) : item),
-        ))].sort();
+        const normalize = (items) =>
+          [
+            ...new Set(
+              (items || []).map((item) =>
+                String(typeof item === "object" ? participantId(item) : item),
+              ),
+            ),
+          ].sort();
         const outgoing = normalize(blocked);
         const incoming = normalize(blockedBy);
         const current = stateRef.current;
-        if (!current.ready || JSON.stringify([outgoing, incoming]) !== JSON.stringify([current.outgoing, current.incoming])) {
-          publish({ token, outgoing, incoming, revision: current.revision + 1, ready: true });
+        if (
+          !current.ready ||
+          JSON.stringify([outgoing, incoming]) !==
+            JSON.stringify([current.outgoing, current.incoming])
+        ) {
+          publish({
+            token,
+            outgoing,
+            incoming,
+            revision: current.revision + 1,
+            ready: true,
+          });
         }
       } catch (error) {
         if (!isCurrent()) return;
@@ -75,6 +112,9 @@ export default function useBlockState(token) {
     ...(state.token === token ? state : stateRef.current),
     stateRef,
     acknowledgeOutgoing,
-    refresh: () => stateRef.current.token === token ? refreshRef.current() : Promise.resolve(),
+    refresh: () =>
+      stateRef.current.token === token
+        ? refreshRef.current()
+        : Promise.resolve(),
   };
 }

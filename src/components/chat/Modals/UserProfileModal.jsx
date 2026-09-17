@@ -94,20 +94,21 @@ export default function UserProfileModal({
               pointerEvents: "none",
             }}
           />
-          {!viewingParticipantProfile.identity_hidden && viewingParticipantProfile.status === "online" && (
-            <div
-              style={{
-                position: "absolute",
-                bottom: 12,
-                right: 12,
-                width: 14,
-                height: 14,
-                borderRadius: "50%",
-                background: "#34A853",
-                border: `2px solid ${t.cardBg}`,
-              }}
-            />
-          )}
+          {!viewingParticipantProfile.identity_hidden &&
+            viewingParticipantProfile.status === "online" && (
+              <div
+                style={{
+                  position: "absolute",
+                  bottom: 12,
+                  right: 12,
+                  width: 14,
+                  height: 14,
+                  borderRadius: "50%",
+                  background: "#34A853",
+                  border: `2px solid ${t.cardBg}`,
+                }}
+              />
+            )}
         </div>
 
         <h3
@@ -121,9 +122,11 @@ export default function UserProfileModal({
           {viewingParticipantProfile.display_name ||
             viewingParticipantProfile.username}
         </h3>
-        {!viewingParticipantProfile.identity_hidden && <div style={{ fontSize: 13, color: t.textMuted, marginBottom: 14 }}>
-          @{viewingParticipantProfile.username}
-        </div>}
+        {!viewingParticipantProfile.identity_hidden && (
+          <div style={{ fontSize: 13, color: t.textMuted, marginBottom: 14 }}>
+            @{viewingParticipantProfile.username}
+          </div>
+        )}
 
         {/* Bio / About Section */}
         <div
@@ -162,7 +165,8 @@ export default function UserProfileModal({
           </div>
         </div>
 
-        {!viewingParticipantProfile.identity_hidden && viewingParticipantProfile.user_id &&
+        {!viewingParticipantProfile.identity_hidden &&
+          viewingParticipantProfile.user_id &&
           viewingParticipantProfile.user_id !== user.userId && (
             <button
               type="button"
