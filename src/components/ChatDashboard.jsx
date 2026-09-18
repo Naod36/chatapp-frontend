@@ -4,6 +4,8 @@ import { useOutbox } from "../hooks/useOutbox.js";
 import useConversationOrganization from "../hooks/useConversationOrganization.js";
 import useMessageSearch from "../hooks/useMessageSearch.js";
 import useGroupManagement from "../hooks/useGroupManagement.js";
+import NotificationSettings from "./settings/NotificationSettings.jsx";
+import { normalizeMutes, isMutedUntil, isConversationMuted, notificationContent } from "../utils/notificationPreferences.js";
 import { mergeOutbox } from "../utils/outbox.js";
 import { useEffect, useRef, useState } from "react";
 import { userService } from "../services/user";
@@ -319,14 +321,41 @@ export default function ChatDashboard({ user, onLogout }) {
   const [inChatSearchQuery, setInChatSearchQuery] = useState("");
   const [inChatSearchMatchIndex, setInChatSearchMatchIndex] = useState(0);
   const [hoveredMsgId, setHoveredMsgId] = useState(null);
-  const [mutedConvIds, setMutedConvIds] = useState(() => {
+  const [muteUntil, setMuteUntil] = useState(() => {
     try {
       const saved = localStorage.getItem("muted_conversations");
-      return saved ? JSON.parse(saved) : [];
+      return normalizeMutes(saved ? JSON.parse(saved) : {});
     } catch (e) {
-      return [];
+      return {};
     }
   });
+  const [notificationClock, setNotificationClock] = useState(Date.now);
+  const [muteScopes, setMuteScopes] = useState(() => {
+    try { return normalizeMutes(JSON.parse(localStorage.getItem("notification_mute_scopes") || "{}")); }
+    catch { return {}; }
+  });
+  const mutedConvIds = conversations.filter((conversation) => isConversationMuted(conversation.id, muteUntil, muteScopes, organization.folders, notificationClock)).map((conversation) => conversation.id);
+  const setScopeMute = (scope, until) => {
+    setNotificationClock(Date.now());
+    setMuteScopes((previous) => {
+      const next = { ...previous };
+      if (until) next[scope] = until; else delete next[scope];
+      localStorage.setItem("notification_mute_scopes", JSON.stringify(next));
+      return next;
+    });
+  };
+  const [hideNotificationPreviews, setHideNotificationPreviews] = useState(() => localStorage.getItem("hide_notification_previews") === "true");
+  const setHidePreviews = (value) => {
+    setHideNotificationPreviews(value);
+    localStorage.setItem("hide_notification_previews", String(value));
+  };
+  useEffect(() => {
+    const refresh = () => setNotificationClock(Date.now());
+    const nextExpiry = Math.min(...[...Object.values(muteUntil), ...Object.values(muteScopes)].filter((until) => typeof until === "number" && until > Date.now()));
+    const timer = Number.isFinite(nextExpiry) ? setTimeout(refresh, Math.min(2147483647, Math.max(1, nextExpiry - Date.now()))) : null;
+    window.addEventListener("focus", refresh);
+    return () => { clearTimeout(timer); window.removeEventListener("focus", refresh); };
+  }, [muteUntil, muteScopes, notificationClock]);
   const [pinnedConvIds, setPinnedConvIds] = useState(() => {
     try {
       const saved = localStorage.getItem("chat_pinned_conv_ids");
@@ -432,6 +461,7 @@ export default function ChatDashboard({ user, onLogout }) {
     const handleClickOutside = (event) => {
       if (
         headerMenuRef.current &&
+        !event.target.closest?.(".ht-choice-menu") &&
         !headerMenuRef.current.contains(event.target)
       ) {
         setIsHeaderMenuOpen(false);
@@ -523,23 +553,17 @@ export default function ChatDashboard({ user, onLogout }) {
     });
   };
 
-  const toggleMuteConversation = (convId) => {
-    setMutedConvIds((prev) => {
-      const isMuted = Array.isArray(prev)
-        ? prev.includes(convId)
-        : !!prev?.[convId];
-      let updated;
-      if (Array.isArray(prev)) {
-        updated = isMuted
-          ? prev.filter((id) => id !== convId)
-          : [...prev, convId];
-      } else {
-        updated = [convId];
-      }
+  const setConversationMute = (convId, until) => {
+    setNotificationClock(Date.now());
+    setMuteUntil((prev) => {
+      const updated = { ...prev };
+      if (until) updated[convId] = until;
+      else delete updated[convId];
       localStorage.setItem("muted_conversations", JSON.stringify(updated));
       return updated;
     });
   };
+  const toggleMuteConversation = (convId) => setConversationMute(convId, isMutedUntil(muteUntil[convId]) ? false : true);
 
   // Group Admin state & Add Member states
   const groupAdminsMap = Object.fromEntries(conversations.map((conversation) => [
@@ -1033,13 +1057,11 @@ export default function ChatDashboard({ user, onLogout }) {
     return !error;
   };
 
-  notificationPreferencesRef.current = { soundEnabled, mutedConvIds };
+  notificationPreferencesRef.current = { soundEnabled, muteUntil, muteScopes, folders: organization.folders, hideNotificationPreviews };
 
   const isNotificationMuted = (conversationId) => {
-    const muted = notificationPreferencesRef.current.mutedConvIds;
-    return Array.isArray(muted)
-      ? muted.some((id) => String(id) === String(conversationId))
-      : Boolean(muted?.[conversationId]);
+    const preferences = notificationPreferencesRef.current;
+    return isConversationMuted(conversationId, preferences.muteUntil, preferences.muteScopes, preferences.folders);
   };
 
   const playNotificationSound = (targetConvId) => {
@@ -1376,6 +1398,7 @@ export default function ChatDashboard({ user, onLogout }) {
       setPinnedMessageIdMap(map);
 
       const fullList = [selfConv, ...sortedOthers].filter(Boolean);
+      conversationsRef.current = fullList;
       setConversations(fullList);
 
       if (activeConvRef.current) {
@@ -1585,9 +1608,6 @@ export default function ChatDashboard({ user, onLogout }) {
     };
     fetchMyProfile();
 
-    if ("Notification" in window && Notification.permission === "default") {
-      Notification.requestPermission().catch(() => {});
-    }
   }, []);
 
   // Set up WebSocket connection with raw socket listener
@@ -1652,23 +1672,16 @@ export default function ChatDashboard({ user, onLogout }) {
               (document.hidden || !isCurrentActive)
             ) {
               try {
-                const senderName = data.sender_name || "New Message";
-                const body =
-                  data.message_type === "image"
-                    ? "📷 Sent an image"
-                    : data.message_type === "audio"
-                      ? "🎙️ Sent a voice message"
-                      : data.message_type === "file"
-                        ? "📁 Sent a file"
-                        : data.content || "New message";
-                const notif = new Notification(`${senderName} (FlowChat)`, {
-                  body: body,
-                  icon: data.sender_avatar || "/favicon.ico",
+                const { title, ...content } = notificationContent(data, notificationPreferencesRef.current.hideNotificationPreviews);
+                const notif = new Notification(title, {
+                  ...content,
                   tag: data.conversation_id,
                 });
-                notif.onclick = () => {
+                notif.onclick = async () => {
+                  if (disposed) return;
                   window.focus();
                   notif.close();
+                  await openNotificationConversationRef.current(data.conversation_id);
                 };
               } catch (e) {}
             }
@@ -2045,6 +2058,18 @@ export default function ChatDashboard({ user, onLogout }) {
   }, [user.token, connectionAttempt]);
 
   // Load messages when selecting active conversation
+  const openNotificationConversationRef = useRef(null);
+  openNotificationConversationRef.current = async (conversationId) => {
+    let conversation = conversationsRef.current.find((item) => item.id === conversationId);
+    if (!conversation) {
+      await loadConversations();
+      conversation = conversationsRef.current.find((item) => item.id === conversationId);
+    }
+    if (!conversation) { showError("This conversation is no longer available."); return; }
+    setActiveRailTab("chats");
+    await handleSelectConversation(conversation);
+  };
+
   const handleSelectConversation = async (
     conv,
     preserveMessages = false,
@@ -3169,6 +3194,7 @@ export default function ChatDashboard({ user, onLogout }) {
             );
         }}
         organization={organization}
+        chatMute={{ mutes: muteUntil, scopes: muteScopes, setMute: setConversationMute }}
         drafts={drafts}
         conversationError={conversationError}
         conversationsLoading={conversationsLoading}
@@ -3211,6 +3237,7 @@ export default function ChatDashboard({ user, onLogout }) {
         setTheme={setTheme}
         soundEnabled={soundEnabled}
         toggleSoundEnabled={toggleSoundEnabled}
+        notificationSettings={<NotificationSettings hidePreviews={hideNotificationPreviews} setHidePreviews={setHidePreviews} folders={organization.folders} scopes={muteScopes} setScopeMute={setScopeMute} themeTokens={t} />}
         onLogout={onLogout}
         setIsResizingLeft={setIsResizingLeft}
         isResizingLeft={isResizingLeft}
@@ -3302,6 +3329,7 @@ export default function ChatDashboard({ user, onLogout }) {
         togglePinConversation={togglePinConversation}
         isConvPinned={isConvPinned}
         toggleMuteConversation={toggleMuteConversation}
+        chatMute={{ mutes: muteUntil, scopes: muteScopes, folders: organization.folders, setMute: setConversationMute }}
         mutedConvIds={mutedConvIds}
         pinnedMessageIdMap={pinnedMessageIdMap}
         pinnedMessagesMap={pinsForDisplay}
@@ -3394,7 +3422,8 @@ export default function ChatDashboard({ user, onLogout }) {
         isResizingRight={isResizingRight}
         setShowInspector={setShowInspector}
         setViewingParticipantProfile={setViewingParticipantProfile}
-        mutedConvIds={mutedConvIds}
+        mutedConvIds={Object.keys(muteUntil).filter((id) => isMutedUntil(muteUntil[id], notificationClock))}
+        scopeMuted={activeConv && isConversationMuted(activeConv.id, {}, muteScopes, organization.folders, notificationClock)}
         toggleMuteConversation={toggleMuteConversation}
         setIsInChatSearchOpen={(open) => {
           setIsInChatSearchOpen(open);

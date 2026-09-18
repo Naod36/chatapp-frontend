@@ -1,4 +1,5 @@
 import { groupMemberActions } from "../../../utils/groupPolicy.js";
+import ChoiceMenu from "../../ChoiceMenu.jsx";
 
 export default function GroupMemberActions({ conversation, actorId, member, pending, onChange, themeTokens: t }) {
   const memberId = member.user_id || member.id;
@@ -6,13 +7,16 @@ export default function GroupMemberActions({ conversation, actorId, member, pend
   if (!actions.length) return null;
   const name = member.display_name || member.username || "member";
   return (
-    <select
-      aria-label={`Actions for ${name}`}
+    <ChoiceMenu
+      label={`Actions for ${name}`}
       value=""
       disabled={pending}
-      style={{ maxWidth: "100%", minWidth: 0, width: 145, background: t.inputBg, color: t.text, border: t.inputBorder, borderRadius: 6, padding: 6, fontSize: 12 }}
-      onChange={(event) => {
-        const selected = actions.find((action) => action.action === event.target.value);
+      placeholder="Member actions"
+      actions
+      themeTokens={t}
+      options={actions.map((action) => ({ value: action.action, label: action.label }))}
+      onChange={(value) => {
+        const selected = actions.find((action) => action.action === value);
         if (!selected) return;
         const warning = selected.action === "transfer_ownership"
           ? `Transfer ownership to ${name}? You will remain an admin and only the new owner can transfer ownership again.`
@@ -24,9 +28,6 @@ export default function GroupMemberActions({ conversation, actorId, member, pend
           onChange(conversation.id, { ...payload, target_user_id: memberId });
         }
       }}
-    >
-      <option value="">Member actions</option>
-      {actions.map((action) => <option key={action.action} value={action.action}>{action.label}</option>)}
-    </select>
+    />
   );
 }

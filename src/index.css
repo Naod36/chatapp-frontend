@@ -46,15 +46,15 @@
   gap: 8px;
   padding: 8px;
 }
-.ht-search-filters label {
+.ht-search-filters label,
+.ht-search-filters > div {
   display: flex;
   flex-direction: column;
   gap: 4px;
   font-size: 11px;
   min-width: 0;
 }
-.ht-search-filters input,
-.ht-search-filters select {
+.ht-search-filters input {
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
@@ -64,10 +64,6 @@
   border: 1px solid rgba(128, 128, 128, 0.4);
   border-radius: 4px;
   font: inherit;
-}
-.ht-search-filters option {
-  color: #111;
-  background: #fff;
 }
 .ht-unified-search button:not(.ht-search-result),
 .ht-history-search-status button {

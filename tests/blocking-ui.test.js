@@ -65,7 +65,7 @@ test("dashboard blocking wiring, refresh triggers, masking and send races", asyn
     organizationService.get = async () => ({
       revision: 0,
       archived_ids: [],
-      folders: [],
+      folders: [{ id: "work", name: "Work", conversation_ids: ["direct"] }],
     });
     const { conversationService } = await server.ssrLoadModule(
       "/src/services/conversations.js",
@@ -419,10 +419,8 @@ test("dashboard blocking wiring, refresh triggers, masking and send races", asyn
     const senderSelect = document.querySelector(
       '[aria-label="Message sender"]',
     );
-    await flush(() => {
-      senderSelect.value = "peer";
-      senderSelect.dispatchEvent(new window.Event("change", { bubbles: true }));
-    });
+    await click(senderSelect);
+    await click([...document.querySelectorAll('[role="menuitemradio"]')].find((item) => item.textContent === "Secret Identity"));
     await flush(() => new Promise((resolve) => setTimeout(resolve, 350)));
     assert.equal(messageSearchCalls.at(-1).filters.sender, "peer");
     const readCountBeforeSearch = sent.filter(
@@ -542,6 +540,7 @@ test("dashboard blocking wiring, refresh triggers, masking and send races", asyn
 
     let sounds = 0;
     let notifications = 0;
+    const notificationInstances = [];
     window.AudioContext = class {
       currentTime = 0;
       constructor() {
@@ -567,10 +566,31 @@ test("dashboard blocking wiring, refresh triggers, masking and send races", asyn
     };
     globalThis.Notification = window.Notification = class {
       static permission = "granted";
-      constructor() {
+      constructor(title, options) {
         notifications++;
+        this.title = title;
+        this.options = options;
+        notificationInstances.push(this);
       }
+      close() {}
     };
+    let permissionRequests = 0;
+    Notification.permission = "default";
+    Notification.requestPermission = async () => {
+      permissionRequests++;
+      Notification.permission = "denied";
+      return "denied";
+    };
+    await click(document.querySelector('[title="Preferences"]'));
+    assert.equal(permissionRequests, 0, "opening settings does not request permission");
+    await click([...document.querySelectorAll("button")].find((button) => button.textContent === "Enable notifications"));
+    assert.equal(permissionRequests, 1);
+    assert.match(document.querySelector('[aria-label="Notifications"]').textContent, /denied/);
+    assert.equal([...document.querySelectorAll("button")].some((button) => button.textContent === "Enable notifications"), false);
+    Notification.permission = "granted";
+    await flush(() => window.dispatchEvent(new window.Event("focus")));
+    assert.match(document.querySelector('[aria-label="Notifications"]').textContent, /granted/);
+    await click(document.querySelector('[title="Messages"]'));
     const originalHandler = onMessage;
     const notify = async (conversationId) =>
       flush(() =>
@@ -588,6 +608,7 @@ test("dashboard blocking wiring, refresh triggers, masking and send races", asyn
     assert.equal(sounds, 1);
     assert.equal(notifications, 1);
     await click(document.querySelector('[title="Preferences"]'));
+    await click(document.querySelector('[aria-label="Notifications"] input[type="checkbox"]'));
     await select("Muted (Silent)");
     await notify("group");
     assert.equal(sounds, 1, "sound preference applies without reconnect");
@@ -596,6 +617,13 @@ test("dashboard blocking wiring, refresh triggers, masking and send races", asyn
       2,
       "global audio toggle does not mute desktop alerts",
     );
+    assert.equal(notificationInstances.at(-1).title, "FlowChat");
+    assert.equal(notificationInstances.at(-1).options.body, "New message");
+    window.focus = () => {};
+    await flush(() => notificationInstances.at(-1).onclick());
+    assert.match(document.querySelector(".ht-chat-pane").textContent, /Shared Group/);
+    await select("Secret Identity");
+    await click(document.querySelector('[title="Preferences"]'));
     await select("Sound Chimes Enabled");
     await click(document.querySelector('[title="Messages"]'));
     await click(
@@ -628,6 +656,41 @@ test("dashboard blocking wiring, refresh triggers, masking and send races", asyn
     await notify("direct");
     assert.equal(sounds, 3, "unmute applies immediately");
     assert.equal(notifications, 4);
+    await click(document.querySelector('[title="Preferences"]'));
+    const settings = document.querySelector('[aria-label="Notifications"]');
+    assert.doesNotMatch(settings.textContent, /Secret Identity|Shared Group/);
+    const choose = async (label, option) => {
+      await click(document.querySelector(`button[aria-label="${label}"]`));
+      await click([...document.querySelectorAll('[role="menuitemradio"]')].find((item) => item.textContent.startsWith(option)));
+    };
+    await choose("Mute all notifications", "For 1 hour");
+    await notify("direct");
+    assert.equal(notifications, 4, "global mute suppresses notifications");
+    await choose("Mute folder Work", "Until unmuted");
+    await choose("Mute all notifications", "Not muted");
+    await notify("direct");
+    assert.equal(notifications, 4, "folder mute survives turning global mute off");
+    assert.equal(sounds, 3);
+    await choose("Mute folder Work", "Not muted");
+    await click(document.querySelector('[title="Messages"]'));
+    const openChatMute = async () => {
+      await click(document.querySelector('[aria-label="Options for Secret Identity"]'));
+      await click([...document.querySelectorAll('[role="menuitem"]')].find((item) => item.textContent === "Mute notifications"));
+    };
+    await openChatMute();
+    await click([...document.querySelectorAll('[role="menuitemradio"]')].find((item) => item.textContent === "For 1 hour"));
+    assert.ok(JSON.parse(localStorage.getItem("muted_conversations")).direct > Date.now());
+    await notify("direct");
+    assert.equal(notifications, 4, "timed mute suppresses alerts immediately");
+    assert.equal(sounds, 3);
+    await openChatMute();
+    await click([...document.querySelectorAll('[role="menuitemradio"]')].find((item) => item.textContent === "Unmute this chat"));
+    await click(document.querySelector('[title="Conversation Options"]'));
+    await choose("Mute this chat", "For 8 hours");
+    assert.ok(JSON.parse(localStorage.getItem("muted_conversations")).group > Date.now() + 7 * 3600000);
+    await click(document.querySelector('[title="Conversation Options"]'));
+    await choose("Mute this chat", "Not muted");
+    assert.equal(document.querySelector("select"), null);
     assert.equal(
       onMessage,
       originalHandler,

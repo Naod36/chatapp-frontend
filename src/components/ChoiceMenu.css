@@ -1,0 +1,9 @@
+.ht-choice-trigger { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; min-width: 0; width: 100%; min-height: 36px; font: inherit; font-size: 12px; border-radius: 6px; cursor: pointer; text-align: left; letter-spacing: 0; }
+.ht-choice-trigger span { overflow-wrap: anywhere; min-width: 0; }
+.ht-choice-trigger svg { flex-shrink: 0; }
+.ht-choice-trigger:disabled { opacity: .5; cursor: default; }
+.ht-choice-menu { position: fixed; z-index: 20000; box-sizing: border-box; max-width: calc(100vw - 16px); max-height: min(320px, calc(100dvh - 16px)); overflow-y: auto; padding: 4px; border-radius: 8px; box-shadow: 0 8px 28px #0003; }
+.ht-choice-menu button { display: flex; justify-content: space-between; gap: 12px; width: 100%; min-height: 36px; padding: 8px 10px; border: 0; border-radius: 4px; background: transparent; color: inherit; font: inherit; font-size: 13px; text-align: left; overflow-wrap: anywhere; cursor: pointer; }
+.ht-choice-menu button:hover, .ht-choice-menu button:focus-visible { background: #80808026; }
+.ht-choice-trigger:focus-visible, .ht-choice-menu button:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
+.ht-choice-menu button:disabled { opacity: .5; cursor: default; }

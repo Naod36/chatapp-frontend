@@ -1,5 +1,7 @@
-import { useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { muteOptions, muteValue } from "../../settings/MuteControl.jsx";
+import { isMutedUntil, isConversationMuted } from "../../../utils/notificationPreferences.js";
 
 export default function ConversationOrganizationMenu({
   request,
@@ -9,8 +11,10 @@ export default function ConversationOrganizationMenu({
   onCreate,
   theme,
   themeTokens,
+  chatMute,
 }) {
   const menuRef = useRef(null);
+  const [showMute, setShowMute] = useState(false);
   useLayoutEffect(() => {
     const menu = menuRef.current;
     const bounds = menu.getBoundingClientRect();
@@ -28,7 +32,7 @@ export default function ConversationOrganizationMenu({
       window.removeEventListener("resize", resize);
       request.trigger?.focus({ preventScroll: true });
     };
-  }, [request]);
+  }, [request, showMute]);
   const disabled =
     !organization.ready ||
     organization.pending ||
@@ -78,6 +82,15 @@ export default function ConversationOrganizationMenu({
       <div className="ht-conversation-menu-title">
         {conversation?.display_name || conversation?.title || "Conversation"}
       </div>
+      {chatMute && conversation && <>
+        <button type="button" role="menuitem" aria-expanded={showMute} onClick={() => setShowMute(!showMute)}>Mute notifications</button>
+        {showMute && <>
+          {isConversationMuted(conversation.id, {}, chatMute.scopes, organization.folders) && <div className="ht-menu-feedback" role="status">Muted by {isMutedUntil(chatMute.scopes.all) ? "Mute all" : "folder settings"}</div>}
+          {typeof chatMute.mutes[conversation.id] === "number" && isMutedUntil(chatMute.mutes[conversation.id]) && <div className="ht-menu-feedback">Until {new Date(chatMute.mutes[conversation.id]).toLocaleString()}</div>}
+          {muteOptions.map((option) => <button key={option.value} type="button" role="menuitemradio" aria-checked={option.value === "off" ? !isMutedUntil(chatMute.mutes[conversation.id]) : option.value === "forever" && chatMute.mutes[conversation.id] === true} onClick={() => { chatMute.setMute(conversation.id, muteValue(option.value)); onClose(); }}>{option.value === "off" ? "Unmute this chat" : option.label}</button>)}
+        </>}
+        <div className="ht-menu-separator" role="separator" />
+      </>}
       <button
         type="button"
         role="menuitem"

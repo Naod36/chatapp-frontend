@@ -13,6 +13,7 @@ export default function OrganizationControls({
   theme = "light",
   menuRequest = null,
   onCloseMenu = () => {},
+  chatMute,
 }) {
   const [open, setOpen] = useState(false);
   const [folderId, setFolderId] = useState("");
@@ -127,6 +128,7 @@ export default function OrganizationControls({
       </div>
       {menuRequest && !open && (
         <ConversationOrganizationMenu
+          chatMute={chatMute}
           request={menuRequest}
           conversation={conversations.find(
             (conversation) => conversation.id === menuRequest.conversationId,

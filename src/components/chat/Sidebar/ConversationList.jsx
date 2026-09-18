@@ -53,6 +53,8 @@ export default function ConversationList({
   setTheme,
   soundEnabled,
   toggleSoundEnabled,
+  notificationSettings,
+  chatMute,
   onLogout,
   setIsResizingLeft,
   isResizingLeft,
@@ -701,6 +703,7 @@ export default function ConversationList({
 
           {organization && (
             <OrganizationControls
+              chatMute={chatMute}
               organization={organization}
               conversations={conversations}
               view={convoTab}
@@ -1900,6 +1903,7 @@ export default function ConversationList({
             </div>
 
             {/* Section 2: Notifications */}
+            {notificationSettings}
             <div>
               <div
                 style={{

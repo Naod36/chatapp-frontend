@@ -1,4 +1,5 @@
 import LoadFeedback from "../../LoadFeedback";
+import ChoiceMenu from "../../ChoiceMenu.jsx";
 
 export default function MessageSearchResults({
   query,
@@ -67,21 +68,16 @@ export default function MessageSearchResults({
       <section aria-label="Message search results">
         <h3 className="ht-section-label">Messages</h3>
         <div className="ht-search-filters">
-          <label>
+          <div>
             Sender
-            <select
-              aria-label="Message sender"
+            <ChoiceMenu
+              label="Message sender"
               value={filters.sender}
-              onChange={(event) => changeFilter("sender", event.target.value)}
-            >
-              <option value="">All senders</option>
-              {[...senders.values()].map((sender) => (
-                <option key={sender.id} value={sender.id}>
-                  {sender.name}
-                </option>
-              ))}
-            </select>
-          </label>
+              onChange={(value) => changeFilter("sender", value)}
+              options={[{ value: "", label: "All senders" }, ...[...senders.values()].map((sender) => ({ value: sender.id, label: sender.name }))]}
+              themeTokens={themeTokens}
+            />
+          </div>
           <label>
             From (UTC)
             <input

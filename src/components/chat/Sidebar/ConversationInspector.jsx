@@ -12,6 +12,7 @@ export default function ConversationInspector({
   setShowInspector,
   setViewingParticipantProfile,
   mutedConvIds,
+  scopeMuted = false,
   toggleMuteConversation,
   setIsInChatSearchOpen,
   setInChatSearchQuery,
@@ -270,6 +271,7 @@ export default function ConversationInspector({
                   : "Mute"}
               </span>
             </button>
+            {scopeMuted && <span role="status" style={{ fontSize: 11, color: t.textMuted, overflowWrap: "anywhere" }}>Muted by global or folder settings</span>}
             <button
               className="ht-inspector-action-btn"
               style={{ color: t.accent }}

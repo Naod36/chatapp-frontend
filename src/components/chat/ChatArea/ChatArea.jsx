@@ -1,4 +1,6 @@
 import LoadFeedback from "../../LoadFeedback";
+import MuteControl from "../../settings/MuteControl.jsx";
+import { isConversationMuted } from "../../../utils/notificationPreferences.js";
 import { useState } from "react";
 import EmojiPicker from "emoji-picker-react";
 import VoicePlayer from "../../VoicePlayer";
@@ -53,6 +55,7 @@ export default function ChatArea({
   togglePinConversation,
   isConvPinned,
   toggleMuteConversation,
+  chatMute,
   mutedConvIds,
   pinnedMessageIdMap,
   pinnedMessagesMap,
@@ -638,7 +641,11 @@ export default function ChatArea({
                   {isConvPinned(activeConv) ? "Unpin Chat" : "Pin Chat"}
                 </button>
 
-                <button
+                {chatMute ? <div style={{ padding: "8px 12px", display: "grid", gap: 6 }}>
+                  <span style={{ fontSize: 12, color: t.textMuted }}>Mute notifications</span>
+                  <MuteControl label="Mute this chat" until={chatMute.mutes[activeConv.id]} onChange={(until) => { chatMute.setMute(activeConv.id, until); setIsHeaderMenuOpen(false); }} themeTokens={t} />
+                  {isConversationMuted(activeConv.id, {}, chatMute.scopes, chatMute.folders) && <span role="status" style={{ color: t.textMuted, fontSize: 12 }}>Muted by global or folder settings</span>}
+                </div> : <button
                   type="button"
                   onClick={() => {
                     toggleMuteConversation(activeConv.id);
@@ -671,7 +678,7 @@ export default function ChatArea({
                   )
                     ? "Unmute Notifications"
                     : "Mute Notifications"}
-                </button>
+                </button>}
               </div>
             )}
           </div>
