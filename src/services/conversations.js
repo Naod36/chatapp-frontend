@@ -26,7 +26,7 @@ export const conversationService = {
   },
 
   async listConversations() {
-    return apiFetch("/conversations");
+    return apiFetch("/conversations", { signal: AbortSignal.timeout(20000) });
   },
 
   async getMessages(conversationId, around = null) {
@@ -90,6 +90,13 @@ export const conversationService = {
   async updateGroup(conversationId, data) {
     return apiFetch(`/conversations/${conversationId}`, {
       method: "PUT",
+      body: JSON.stringify(data),
+    });
+  },
+  async updateMembers(conversationId, data) {
+    return apiFetch(`/conversations/${conversationId}/members`, {
+      method: "POST",
+      signal: AbortSignal.timeout(15000),
       body: JSON.stringify(data),
     });
   },

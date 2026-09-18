@@ -803,6 +803,11 @@ export default function ChatArea({
         style={{ position: "relative" }}
       >
         {messages.map((m) => {
+          if (m.message_type === "system") return (
+            <div key={m.id || m.message_id} id={`msg-${m.id || m.message_id}`} style={{ textAlign: "center", color: t.textMuted, fontSize: 12, padding: "8px 16px", overflowWrap: "anywhere" }}>
+              {m.content}
+            </div>
+          );
           const isSelf = m.sender_id === user.userId;
           const parentMsg = m.reply_to_id
             ? messages.find(

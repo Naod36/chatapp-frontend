@@ -5,6 +5,8 @@ export default function AddMemberModal({
     setAddMemberQuery,
     addMemberResults,
     handleAddMemberToGroup,
+    pending,
+    error,
     themeTokens: t
 }) {
     if (!isAddMemberOpen) return null;
@@ -60,6 +62,8 @@ export default function AddMemberModal({
                     Add Member to Group
                 </h3>
 
+                {error && <p role="alert" style={{ color: t.text }}>{error}</p>}
+                {pending && <p role="status" style={{ color: t.textMuted }}>Adding member...</p>}
                 <input
                     type="text"
                     placeholder="Search public accounts..."
@@ -104,6 +108,7 @@ export default function AddMemberModal({
                             <button
                                 type="button"
                                 onClick={() => handleAddMemberToGroup(u)}
+                                disabled={pending}
                                 style={{
                                     background: t.accent,
                                     border: "none",

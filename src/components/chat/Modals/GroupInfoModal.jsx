@@ -1,4 +1,6 @@
 import { getAssetUrl } from "../../../utils/theme";
+import GroupMemberActions from "./GroupMemberActions.jsx";
+import { mustTransferBeforeLeaving } from "../../../utils/groupPolicy.js";
 
 export default function GroupInfoModal({
     isGroupInfoOpen,
@@ -15,7 +17,8 @@ export default function GroupInfoModal({
     setEditGroupTitle,
     handleSaveGroupInfo,
     isSavingGroupInfo,
-    setIsAddMemberOpen
+    setIsAddMemberOpen,
+    groupManagement
 }) {
     if (!isGroupInfoOpen || !activeConv || activeConv.type !== "group") return null;
 
@@ -35,6 +38,9 @@ export default function GroupInfoModal({
             onClick={() => setIsGroupInfoOpen(false)}
         >
             <div
+                role="dialog"
+                aria-modal="true"
+                aria-label="Group information"
                 style={{
                     background: t.cardBg,
                     border: t.border,
@@ -54,6 +60,7 @@ export default function GroupInfoModal({
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                     <h3 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: t.text }}>Group Info & Admin Settings</h3>
                     <button
+                        aria-label="Close group information"
                         onClick={() => setIsGroupInfoOpen(false)}
                         style={{ background: "none", border: "none", color: t.textMuted, cursor: "pointer", fontSize: 18, fontWeight: 700 }}
                     >
@@ -222,8 +229,8 @@ export default function GroupInfoModal({
                             const isCreator = activeConv.creator_id === pId;
 
                             return (
-                                <div key={pId} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 10px", borderRadius: 12, background: "rgba(120,120,120,0.05)" }}>
-                                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                                <div key={pId} style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between", padding: "8px 10px", borderRadius: 12, background: "rgba(120,120,120,0.05)", overflowWrap: "anywhere", minWidth: 0 }}>
+                                    <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, maxWidth: "100%" }}>
                                         <div style={{ width: 36, height: 36, borderRadius: "50%", background: "#6366f1", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 13 }}>
                                             {p.avatar_url ? <img src={p.avatar_url} alt="" style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} /> : ((p.display_name || p.username)?.[0]?.toUpperCase() || "@")}
                                         </div>
@@ -236,19 +243,30 @@ export default function GroupInfoModal({
                                         </div>
                                     </div>
 
-                                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                    <div style={{ display: "flex", alignItems: "flex-end", flexDirection: "column", gap: 6, maxWidth: "100%" }}>
                                         {isCreator ? (
-                                            <span style={{ fontSize: 10, fontWeight: 800, color: "#eab308", background: "rgba(234, 179, 8, 0.15)", padding: "2px 8px", borderRadius: 8 }}>Creator</span>
+                                            <span style={{ fontSize: 10, fontWeight: 800, color: "#eab308", background: "rgba(234, 179, 8, 0.15)", padding: "2px 8px", borderRadius: 8 }}>Owner</span>
                                         ) : isAdmin ? (
                                             <span style={{ fontSize: 10, fontWeight: 800, color: "#38bdf8", background: "rgba(56, 189, 248, 0.15)", padding: "2px 8px", borderRadius: 8 }}>Admin</span>
                                         ) : (
                                             <span style={{ fontSize: 10, fontWeight: 700, color: t.textMuted, background: "rgba(120, 120, 120, 0.1)", padding: "2px 8px", borderRadius: 8 }}>Member</span>
                                         )}
+                                        <GroupMemberActions conversation={activeConv} actorId={user.userId} member={p} pending={groupManagement.pending} onChange={groupManagement.change} themeTokens={t} />
                                     </div>
                                 </div>
                             );
                         })}
                     </div>
+                    {groupManagement.error && <p role="alert" style={{ color: t.text, overflowWrap: "anywhere" }}>{groupManagement.error}</p>}
+                    {groupManagement.pending && <p role="status" style={{ color: t.textMuted }}>Updating group...</p>}
+                    {mustTransferBeforeLeaving(activeConv, user.userId) && <p style={{ color: t.textMuted, fontSize: 12 }}>Transfer ownership before leaving.</p>}
+                    <button type="button"
+                        disabled={groupManagement.pending || mustTransferBeforeLeaving(activeConv, user.userId)}
+                        onClick={() => {
+                            if (window.confirm("Leave this group? You will lose access to its messages.")) groupManagement.change(activeConv.id, { action: "leave" });
+                        }}
+                        style={{ marginTop: 16, padding: "10px 14px", borderRadius: 8, border: t.inputBorder, color: t.text, background: t.inputBg }}
+                    >Leave group</button>
                 </div>
             </div>
         </div>

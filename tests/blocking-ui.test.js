@@ -291,7 +291,23 @@ test("dashboard blocking wiring, refresh triggers, masking and send races", asyn
       /No messages yet/,
     );
     failConversations = false;
+    const normalList = conversationService.listConversations;
+    let releaseSlowList;
+    let slowListCalls = 0;
+    conversationService.listConversations = () => {
+      slowListCalls += 1;
+      return new Promise((resolve) => { releaseSlowList = resolve; });
+    };
     await click(document.querySelector('[aria-label="Retry conversations"]'));
+    const conversationPoll = [...intervals.values()].find(({ delay }) => delay === 5000);
+    assert.ok(conversationPoll);
+    await flush(() => { conversationPoll.callback(); conversationPoll.callback(); });
+    assert.equal(slowListCalls, 1, "polls reuse the pending conversation load");
+    const slowResult = await normalList();
+    await flush(() => releaseSlowList(slowResult));
+    assert.match(document.querySelector(".ht-sidebar").textContent, /Shared Group/);
+    assert.doesNotMatch(document.querySelector(".ht-sidebar").textContent, /Loading conversations/);
+    conversationService.listConversations = normalList;
     assert.equal(document.querySelector('.ht-sidebar [role="alert"]'), null);
     await click(document.querySelector('[title="Profile Details"]'));
     await changeText(
@@ -1294,6 +1310,22 @@ test("dashboard blocking wiring, refresh triggers, masking and send races", asyn
       0,
       "block during upload prevents send",
     );
+
+    incoming = [];
+    await flush(() => onMessage({ event: "block_state_changed" }));
+    let releaseRevokedHistory;
+    conversationService.getMessages = (id) => id === "group"
+      ? new Promise((resolve) => { releaseRevokedHistory = resolve; })
+      : normalHistory(id);
+    await select("Shared Group");
+    const beforeRemovalList = conversationService.listConversations;
+    conversationService.listConversations = async () => (await beforeRemovalList()).filter((conversation) => conversation.conversation_id !== "group");
+    await flush(() => onMessage({ event: "group_member_removed", conversation_id: "group", target_user_id: "me" }));
+    assert.equal(document.querySelector("textarea"), null, "removed member loses composer immediately");
+    await flush(() => releaseRevokedHistory([{ ...message, content: "Revoked stale history" }]));
+    assert.doesNotMatch(document.body.textContent, /Revoked stale history/);
+    assert.doesNotMatch(document.querySelector(".ht-sidebar").textContent, /Shared Group/);
+    assert.match(document.body.textContent, /no longer have access/);
 
     await flush(() => root.unmount());
     assert.equal(intervals.size, 0, "all polling timers cleaned up");

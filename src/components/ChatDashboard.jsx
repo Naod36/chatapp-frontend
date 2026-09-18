@@ -3,6 +3,7 @@ import { useConversationDrafts } from "../hooks/useConversationDrafts.js";
 import { useOutbox } from "../hooks/useOutbox.js";
 import useConversationOrganization from "../hooks/useConversationOrganization.js";
 import useMessageSearch from "../hooks/useMessageSearch.js";
+import useGroupManagement from "../hooks/useGroupManagement.js";
 import { mergeOutbox } from "../utils/outbox.js";
 import { useEffect, useRef, useState } from "react";
 import { userService } from "../services/user";
@@ -163,6 +164,14 @@ export default function ChatDashboard({ user, onLogout }) {
   });
   const [conversations, setConversations] = useState([]);
   const [activeConv, setActiveConv] = useState(null);
+  const [membershipRevision, setMembershipRevision] = useState(0);
+  const groupManagement = useGroupManagement(async (conversationId, change) => {
+    handleGroupMembershipEvent({
+      conversation_id: conversationId,
+      event: change.action === "leave" ? "group_member_removed" : "group_members_changed",
+      target_user_id: change.action === "leave" ? user.userId : change.target_user_id,
+    });
+  });
   const [messages, setMessages] = useState([]);
   const [editText, setEditText] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
@@ -199,6 +208,7 @@ export default function ChatDashboard({ user, onLogout }) {
   const [conversationError, setConversationError] = useState(null);
   const [conversationsLoading, setConversationsLoading] = useState(true);
   const conversationRequestRef = useRef(0);
+  const conversationFlightRef = useRef(null);
   const historyRequestRef = useRef(0);
   const [historyState, setHistoryState] = useState({
     loading: false,
@@ -341,7 +351,7 @@ export default function ChatDashboard({ user, onLogout }) {
     searchQuery,
     searchFilters,
     user.token,
-    blockRevision,
+    `${blockRevision}:${membershipRevision}`,
   );
 
   const isBlocked = (userId) => blockedUserIds.includes(String(userId));
@@ -532,14 +542,10 @@ export default function ChatDashboard({ user, onLogout }) {
   };
 
   // Group Admin state & Add Member states
-  const [groupAdminsMap, setGroupAdminsMap] = useState(() => {
-    try {
-      const saved = localStorage.getItem("group_admins_map");
-      return saved ? JSON.parse(saved) : {};
-    } catch (e) {
-      return {};
-    }
-  });
+  const groupAdminsMap = Object.fromEntries(conversations.map((conversation) => [
+    conversation.id,
+    (conversation.participants || []).filter((member) => member.role === "admin").map((member) => member.user_id || member.id),
+  ]));
 
   const [isAddMemberOpen, setIsAddMemberOpen] = useState(false);
   const [addMemberQuery, setAddMemberQuery] = useState("");
@@ -798,116 +804,21 @@ export default function ChatDashboard({ user, onLogout }) {
       (participant.role === "admin" || participant.role === "creator")
     )
       return true;
-    const admins = groupAdminsMap[conv.id] || [];
-    return admins.includes(userId);
+    return false;
   };
 
-  const handleMakeAdmin = (convId, memberId, isAdmin = true) => {
-    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-      socketRef.current.send(
-        JSON.stringify({
-          action: "update_group_admin",
-          conversation_id: convId,
-          target_user_id: memberId,
-          is_admin: isAdmin,
-        }),
-      );
-    }
-
-    setGroupAdminsMap((prev) => {
-      const currentAdmins = prev[convId] || [];
-      let updatedAdmins;
-      if (isAdmin) {
-        updatedAdmins = Array.from(new Set([...currentAdmins, memberId]));
-      } else {
-        updatedAdmins = currentAdmins.filter((id) => id !== memberId);
-      }
-      const updated = { ...prev, [convId]: updatedAdmins };
-      localStorage.setItem("group_admins_map", JSON.stringify(updated));
-      return updated;
-    });
-
-    setConversations((prev) =>
-      prev.map((c) => {
-        if (c.id === convId && c.participants) {
-          const updatedParts = c.participants.map((p) => {
-            const pId = p.user_id || p.id;
-            if (pId === memberId) {
-              return { ...p, role: isAdmin ? "admin" : "member" };
-            }
-            return p;
-          });
-          return { ...c, participants: updatedParts };
-        }
-        return c;
-      }),
-    );
-
-    setActiveConv((prev) => {
-      if (prev && prev.id === convId && prev.participants) {
-        const updatedParts = prev.participants.map((p) => {
-          const pId = p.user_id || p.id;
-          if (pId === memberId) {
-            return { ...p, role: isAdmin ? "admin" : "member" };
-          }
-          return p;
-        });
-        return { ...prev, participants: updatedParts };
-      }
-      return prev;
-    });
+  const handleMakeAdmin = async (convId, memberId, isAdmin = true) => {
+    setIsGroupInfoOpen(true);
+    await groupManagement.change(convId, { action: "set_admin", target_user_id: memberId, is_admin: isAdmin });
   };
 
-  const handleAddMemberToGroup = (newMember) => {
+  const handleAddMemberToGroup = async (newMember) => {
     if (!activeConv || activeConv.type !== "group") return;
     const memberId = newMember.user_id || newMember.id;
-
-    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-      socketRef.current.send(
-        JSON.stringify({
-          action: "add_group_member",
-          conversation_id: activeConv.id,
-          target_user_id: memberId,
-        }),
-      );
+    if (await groupManagement.change(activeConv.id, { action: "add_member", target_user_id: memberId })) {
+      setIsAddMemberOpen(false);
+      setAddMemberQuery("");
     }
-
-    const exists = activeConv.participants?.some(
-      (p) => (p.user_id || p.id) === memberId,
-    );
-    if (exists) return;
-
-    const updatedParticipant = {
-      user_id: memberId,
-      username: newMember.username,
-      display_name: newMember.display_name || newMember.username,
-      avatar_url: newMember.avatar_url || null,
-      status: newMember.status || "offline",
-      last_seen: newMember.last_seen || null,
-      role: "member",
-    };
-
-    const updatedParticipants = [
-      ...(activeConv.participants || []),
-      updatedParticipant,
-    ];
-
-    setActiveConv((prev) => ({
-      ...prev,
-      participants: updatedParticipants,
-    }));
-
-    setConversations((prev) =>
-      prev.map((c) => {
-        if (c.id === activeConv.id) {
-          return { ...c, participants: updatedParticipants };
-        }
-        return c;
-      }),
-    );
-
-    setIsAddMemberOpen(false);
-    setAddMemberQuery("");
   };
 
   // Group Creation Modal states
@@ -1385,6 +1296,14 @@ export default function ChatDashboard({ user, onLogout }) {
 
   const loadConversations = async () => {
     const revision = dataRevisionRef.current;
+    const currentFlight = conversationFlightRef.current;
+    if (currentFlight?.revision === revision) {
+      await currentFlight.done;
+      return;
+    }
+    let complete;
+    const flight = { revision, done: new Promise((resolve) => { complete = resolve; }) };
+    conversationFlightRef.current = flight;
     const request = ++conversationRequestRef.current;
     setConversationsLoading(true);
     try {
@@ -1468,6 +1387,8 @@ export default function ChatDashboard({ user, onLogout }) {
             if (!prev) return freshActive;
             return freshActive;
           });
+        } else if (activeConvRef.current.type === "group") {
+          revokeGroupAccess(activeConvRef.current.id);
         }
       }
     } catch (err) {
@@ -1479,8 +1400,50 @@ export default function ChatDashboard({ user, onLogout }) {
         setConversationError("Could not load conversations.");
       }
     } finally {
+      complete();
+      if (conversationFlightRef.current === flight) conversationFlightRef.current = null;
       if (request === conversationRequestRef.current)
         setConversationsLoading(false);
+    }
+  };
+
+  const revokeGroupAccess = (conversationId) => {
+    dataRevisionRef.current += 1;
+    historyRequestRef.current += 1;
+    conversationRequestRef.current += 1;
+    setConversations((previous) => previous.filter((conversation) => conversation.id !== conversationId));
+    setPinnedMessagesMap((previous) => {
+      const next = { ...previous };
+      delete next[conversationId];
+      return next;
+    });
+    setMembershipRevision((previous) => previous + 1);
+    if (activeConvRef.current?.id !== conversationId) return;
+    activeConvRef.current = null;
+    loadedConversationRef.current = null;
+    historyTargetRef.current = null;
+    setActiveConv(null);
+    setMessages([]);
+    setHistoryTarget(null);
+    setHistoryState({ loading: false, error: null });
+    setImageViewer(null);
+    setReplyingTo(null);
+    setContextMenu(null);
+    setParticipantContextMenu(null);
+    setViewingParticipantProfile(null);
+    setIsGroupInfoOpen(false);
+    setIsAddMemberOpen(false);
+    setCompactChatOpen(false);
+    setErrorToast("You no longer have access to this group.");
+  };
+
+  const handleGroupMembershipEvent = (event) => {
+    if (event.event === "group_member_removed" && event.target_user_id === user.userId) {
+      revokeGroupAccess(event.conversation_id);
+    } else {
+      dataRevisionRef.current += 1;
+      historyRequestRef.current += 1;
+      setMembershipRevision((previous) => previous + 1);
     }
   };
 
@@ -1534,7 +1497,7 @@ export default function ChatDashboard({ user, onLogout }) {
     return () => {
       disposed = true;
     };
-  }, [blockRevision, blockStateReady]);
+  }, [blockRevision, blockStateReady, membershipRevision]);
 
   // Periodic background sync loop every 5 seconds as a fail-safe backup for WebSockets
   useEffect(() => {
@@ -2020,56 +1983,8 @@ export default function ChatDashboard({ user, onLogout }) {
             }
             return prev;
           });
-        } else if (data.event === "group_admin_updated") {
-          const { conversation_id, target_user_id, is_admin } = data;
-          setGroupAdminsMap((prev) => {
-            const currentAdmins = prev[conversation_id] || [];
-            let updatedAdmins;
-            if (is_admin) {
-              updatedAdmins = Array.from(
-                new Set([...currentAdmins, target_user_id]),
-              );
-            } else {
-              updatedAdmins = currentAdmins.filter(
-                (id) => id !== target_user_id,
-              );
-            }
-            const updated = { ...prev, [conversation_id]: updatedAdmins };
-            localStorage.setItem("group_admins_map", JSON.stringify(updated));
-            return updated;
-          });
-
-          setConversations((prev) =>
-            prev.map((c) => {
-              if (c.id === conversation_id && c.participants) {
-                const updatedParts = c.participants.map((p) => {
-                  const pId = p.user_id || p.id;
-                  if (pId === target_user_id) {
-                    return { ...p, role: is_admin ? "admin" : "member" };
-                  }
-                  return p;
-                });
-                return { ...c, participants: updatedParts };
-              }
-              return c;
-            }),
-          );
-
-          setActiveConv((prev) => {
-            if (prev && prev.id === conversation_id && prev.participants) {
-              const updatedParts = prev.participants.map((p) => {
-                const pId = p.user_id || p.id;
-                if (pId === target_user_id) {
-                  return { ...p, role: is_admin ? "admin" : "member" };
-                }
-                return p;
-              });
-              return { ...prev, participants: updatedParts };
-            }
-            return prev;
-          });
-        } else if (data.event === "group_member_added") {
-          loadConversations();
+        } else if (["group_admin_updated", "group_member_added", "group_member_removed", "group_ownership_transferred"].includes(data.event)) {
+          handleGroupMembershipEvent(data);
         } else if (data.event === "group_updated") {
           const { conversation_id, title, avatar_url } = data;
           setConversations((prev) =>
@@ -3700,6 +3615,7 @@ export default function ChatDashboard({ user, onLogout }) {
 
       {/* Modals */}
       <GroupInfoModal
+        groupManagement={groupManagement}
         isGroupInfoOpen={isGroupInfoOpen}
         setIsGroupInfoOpen={setIsGroupInfoOpen}
         activeConv={activeConvForDisplay}
@@ -3743,6 +3659,8 @@ export default function ChatDashboard({ user, onLogout }) {
       />
 
       <AddMemberModal
+        pending={groupManagement.pending}
+        error={groupManagement.error}
         isAddMemberOpen={isAddMemberOpen}
         setIsAddMemberOpen={setIsAddMemberOpen}
         addMemberQuery={addMemberQuery}

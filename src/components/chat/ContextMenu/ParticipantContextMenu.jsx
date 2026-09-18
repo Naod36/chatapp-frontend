@@ -144,6 +144,7 @@ export default function ParticipantContextMenu({
 
       {activeConv &&
         isUserGroupAdmin(activeConv, user.userId) &&
+        (!currentlyAdmin || activeConv.creator_id === user.userId) &&
         !isMe &&
         !isCreator && (
           <button
