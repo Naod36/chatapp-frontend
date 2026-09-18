@@ -4,6 +4,7 @@ import { useOutbox } from "../hooks/useOutbox.js";
 import useConversationOrganization from "../hooks/useConversationOrganization.js";
 import useMessageSearch from "../hooks/useMessageSearch.js";
 import useGroupManagement from "../hooks/useGroupManagement.js";
+import useOlderMessages from "../hooks/useOlderMessages.js";
 import NotificationSettings from "./settings/NotificationSettings.jsx";
 import { normalizeMutes, isMutedUntil, isConversationMuted, notificationContent } from "../utils/notificationPreferences.js";
 import { mergeOutbox } from "../utils/outbox.js";
@@ -1253,6 +1254,25 @@ export default function ChatDashboard({ user, onLogout }) {
   }, []);
 
   const t = THEME[theme];
+  const olderRevision = dataRevisionRef.current;
+  const olderHistoryRequest = historyRequestRef.current;
+  const olderMessages = useOlderMessages({
+    conversationId: activeConv?.id,
+    revision: `${olderRevision}:${olderHistoryRequest}`,
+    messages,
+    containerRef: chatContainerRef,
+    enabled: Boolean(activeConv && activeConv.id !== "virtual-saved-messages" && loadedConversationRef.current === activeConv.id && !historyState.loading && !historyState.error),
+    isCurrent: () => dataRevisionRef.current === olderRevision && historyRequestRef.current === olderHistoryRequest,
+    onPrepend: (older) => {
+      if (!older.length) return;
+      followLatestRef.current = false;
+      older.forEach((message) => renderedMessageIdsRef.current.add(message.id));
+      setMessages((previous) => {
+        const existing = new Set(previous.map((message) => message.id || message.message_id));
+        return [...older.filter((message) => !existing.has(message.id)), ...previous];
+      });
+    },
+  });
 
   const scrollToBottom = (smooth = true) => {
     followLatestRef.current = true;
@@ -1268,6 +1288,7 @@ export default function ChatDashboard({ user, onLogout }) {
   const handleChatScroll = () => {
     const container = chatContainerRef.current;
     if (!container) return;
+    if (container.scrollTop < 80 && !olderMessages.loading && !olderMessages.error) olderMessages.load();
     const distanceFromBottom =
       container.scrollHeight - container.scrollTop - container.clientHeight;
     followLatestRef.current =
@@ -3262,6 +3283,7 @@ export default function ChatDashboard({ user, onLogout }) {
         />
       )}
       <ChatArea
+        olderMessages={olderMessages}
         onOpenImage={(message) => {
           const images = messagesForDisplay.filter(
             (item) =>

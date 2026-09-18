@@ -89,6 +89,14 @@ test("authenticated requests expire only their own rejected session", async () =
     };
     await conversationService.getMessages("chat", "older/id");
     globalThis.fetch = async (url, options) => {
+      assert.equal(new URL(url).searchParams.get("mark_read"), "false");
+      assert.equal(new URL(url).searchParams.get("before"), "cursor/id");
+      assert.equal(new URL(url).searchParams.has("around"), false);
+      assert.ok(options.signal);
+      return response(200);
+    };
+    await conversationService.getOlderMessages("chat", "cursor/id");
+    globalThis.fetch = async (url, options) => {
       const parsed = new URL(url);
       assert.equal(parsed.pathname, "/search/messages");
       assert.equal(parsed.searchParams.get("q"), "100% & notes");

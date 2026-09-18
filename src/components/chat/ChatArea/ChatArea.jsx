@@ -14,6 +14,7 @@ import {
 } from "../../../utils/theme";
 
 export default function ChatArea({
+  olderMessages,
   onOpenImage,
   pendingMessageAction = null,
   handleRetryMessage,
@@ -809,6 +810,10 @@ export default function ChatArea({
         onPaste={handlePaste}
         style={{ position: "relative" }}
       >
+        {olderMessages?.available && <div style={{ padding: "8px 16px", textAlign: "center", color: t.text }}>
+          {olderMessages.error && <p role="alert" style={{ fontSize: 12 }}>{olderMessages.error}</p>}
+          <button type="button" disabled={olderMessages.loading} onClick={olderMessages.load} style={{ background: t.inputBg, color: t.text, border: t.inputBorder, borderRadius: 6, padding: "8px 12px" }}>{olderMessages.loading ? "Loading older messages..." : olderMessages.error ? "Retry older messages" : "Load older messages"}</button>
+        </div>}
         {messages.map((m) => {
           if (m.message_type === "system") return (
             <div key={m.id || m.message_id} id={`msg-${m.id || m.message_id}`} style={{ textAlign: "center", color: t.textMuted, fontSize: 12, padding: "8px 16px", overflowWrap: "anywhere" }}>

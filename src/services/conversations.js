@@ -44,6 +44,9 @@ export const conversationService = {
       signal: AbortSignal.timeout(15000),
     });
   },
+  async getOlderMessages(conversationId, before) {
+    return apiFetch(`/conversations/${conversationId}/messages?mark_read=false&before=${encodeURIComponent(before)}`, { signal: AbortSignal.timeout(20000) });
+  },
 
   async sendMessage(conversationId, message) {
     const { client_message_id, ...payload } = message;
