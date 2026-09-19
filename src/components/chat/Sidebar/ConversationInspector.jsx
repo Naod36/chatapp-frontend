@@ -168,6 +168,7 @@ export default function ConversationInspector({
               style={{ color: t.text }}
               onClick={() => {
                 setViewingParticipantProfile({
+                  ...activeConv.other_participant,
                   user_id:
                     activeConv.other_participant?.user_id ||
                     activeConv.other_participant?.id,

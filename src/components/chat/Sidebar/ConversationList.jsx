@@ -6,6 +6,7 @@ import {
 } from "../../../utils/theme";
 import { apiFetch, API_BASE } from "../../../services/api";
 import LoadFeedback from "../../LoadFeedback";
+import PresenceSettings from "../../settings/PresenceSettings";
 import { MAX_UPLOAD_LABEL } from "../../../utils/uploadLimits.js";
 import OrganizationControls from "./OrganizationControls";
 import MessageSearchResults from "./MessageSearchResults";
@@ -1420,6 +1421,7 @@ export default function ConversationList({
             Profile Settings
           </h2>
 
+          <PresenceSettings profile={myProfile} onSaved={(presence) => setMyProfile((previous) => ({ ...previous, ...presence }))} themeTokens={t} />
           <form
             onSubmit={handleUpdateMyProfile}
             style={{ display: "flex", flexDirection: "column", gap: 16 }}

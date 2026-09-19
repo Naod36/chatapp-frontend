@@ -1,4 +1,5 @@
 import { getAssetUrl } from "../../../utils/theme";
+import { presenceLabel } from "../../../utils/presence";
 
 export default function UserProfileModal({
   viewingParticipantProfile,
@@ -125,6 +126,12 @@ export default function UserProfileModal({
         {!viewingParticipantProfile.identity_hidden && (
           <div style={{ fontSize: 13, color: t.textMuted, marginBottom: 14 }}>
             @{viewingParticipantProfile.username}
+          </div>
+        )}
+
+        {!viewingParticipantProfile.identity_hidden && (
+          <div style={{ color: t.textMuted, fontSize: 13, marginBottom: 14, overflowWrap: "anywhere", maxWidth: "100%" }}>
+            {presenceLabel(viewingParticipantProfile, (date) => `Last seen ${new Date(date).toLocaleString()}`)}
           </div>
         )}
 

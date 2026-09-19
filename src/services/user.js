@@ -6,6 +6,9 @@ import { apiFetch } from "./api";
  * Handles current user info retrieval, profile edits, and public searches.
  */
 export const userService = {
+  async updatePresence(preferences) {
+    return apiFetch("/users/me/presence", { method: "PUT", body: JSON.stringify(preferences) });
+  },
   async getProfile() {
     return apiFetch("/me");
   },

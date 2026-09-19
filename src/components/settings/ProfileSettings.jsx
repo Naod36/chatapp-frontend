@@ -1,4 +1,5 @@
 import { getAssetUrl } from "../../utils/theme";
+import PresenceSettings from "./PresenceSettings";
 
 export default function ProfileSettings({
   myProfile,
@@ -33,6 +34,7 @@ export default function ProfileSettings({
         Profile Settings
       </h2>
 
+      <PresenceSettings profile={myProfile} onSaved={(presence) => setMyProfile((previous) => ({ ...previous, ...presence }))} themeTokens={t} />
       <form
         onSubmit={handleUpdateMyProfile}
         style={{ display: "flex", flexDirection: "column", gap: 16 }}

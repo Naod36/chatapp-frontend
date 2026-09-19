@@ -129,6 +129,7 @@ export default function Inspector({
                                 style={{ color: t.text }}
                                 onClick={() => {
                                     setViewingParticipantProfile({
+                                        ...activeConv.other_participant,
                                         user_id: activeConv.other_participant?.user_id,
                                         display_name: activeConv.display_name,
                                         username: activeConv.other_participant?.username || activeConv.display_name,

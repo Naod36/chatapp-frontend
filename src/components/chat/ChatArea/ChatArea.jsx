@@ -1,3 +1,4 @@
+import { presenceLabel } from "../../../utils/presence";
 import LoadFeedback from "../../LoadFeedback";
 import MuteControl from "../../settings/MuteControl.jsx";
 import { isConversationMuted } from "../../../utils/notificationPreferences.js";
@@ -406,7 +407,8 @@ export default function ChatArea({
                         activeConv.status === "online"
                       ? "#34A853"
                       : t.textMuted,
-                height: 14,
+                minHeight: 14,
+                overflowWrap: "anywhere",
                 display: "block",
               }}
             >
@@ -417,12 +419,7 @@ export default function ChatArea({
                     ? `${activeConv.participants?.length || 0} members`
                     : !activeConv.other_participant
                       ? "personal cloud storage"
-                      : activeConv.other_participant.status === "online" ||
-                          activeConv.status === "online"
-                        ? "online"
-                        : formatLastSeen(
-                            activeConv.other_participant.last_seen,
-                          ))}
+                      : presenceLabel(activeConv.other_participant, formatLastSeen))}
             </span>
           </div>
         )}

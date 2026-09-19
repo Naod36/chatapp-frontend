@@ -191,6 +191,7 @@ export default function ParticipantContextMenu({
         type="button"
         onClick={() => {
           setViewingParticipantProfile({
+            ...participantContextMenu.participant,
             user_id: pId,
             display_name:
               participantContextMenu.participant.display_name ||

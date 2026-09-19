@@ -43,6 +43,7 @@ import CreateGroupModal from "./chat/Modals/CreateGroupModal";
 import AddMemberModal from "./chat/Modals/AddMemberModal";
 import GroupInfoModal from "./chat/Modals/GroupInfoModal";
 import UserProfileModal from "./chat/Modals/UserProfileModal";
+import { applyPresence, presenceFields, presenceLabel } from "../utils/presence";
 import ParticipantContextMenu from "./chat/ContextMenu/ParticipantContextMenu";
 
 const formatLastSeen = (timestamp) => {
@@ -1982,41 +1983,15 @@ export default function ChatDashboard({ user, onLogout }) {
           data.type === "user_status" ||
           data.action === "user_status"
         ) {
-          setConversations((prev) => {
-            return prev.map((c) => {
-              const otherId =
-                c.other_participant?.user_id || c.other_participant?.id;
-              if (otherId && String(otherId) === String(data.user_id)) {
-                return {
-                  ...c,
-                  status: data.status,
-                  other_participant: {
-                    ...c.other_participant,
-                    status: data.status,
-                    last_seen: data.last_seen,
-                  },
-                };
-              }
-              return c;
-            });
-          });
-
-          setActiveConv((prev) => {
-            const otherId =
-              prev?.other_participant?.user_id || prev?.other_participant?.id;
-            if (otherId && String(otherId) === String(data.user_id)) {
-              return {
-                ...prev,
-                status: data.status,
-                other_participant: {
-                  ...prev.other_participant,
-                  status: data.status,
-                  last_seen: data.last_seen,
-                },
-              };
-            }
-            return prev;
-          });
+          setConversations((previous) => previous.map((conversation) => applyPresence(conversation, data)));
+          setActiveConv((previous) => applyPresence(previous, data));
+          setSearchResults((previous) => previous.map((person) => String(person.user_id || person.id) === String(data.user_id)
+            ? { ...person, ...presenceFields(data) } : person));
+          if (String(data.user_id) === String(user.userId)) {
+            setMyProfile((previous) => ({ ...previous, ...presenceFields(data) }));
+          }
+          setViewingParticipantProfile((previous) => previous && String(previous.user_id || previous.id) === String(data.user_id)
+            ? { ...previous, ...presenceFields(data) } : previous);
         } else if (["group_admin_updated", "group_member_added", "group_member_removed", "group_ownership_transferred"].includes(data.event)) {
           handleGroupMembershipEvent(data);
         } else if (data.event === "group_updated") {
@@ -2363,6 +2338,7 @@ export default function ChatDashboard({ user, onLogout }) {
         display_name: targetUser.display_name || targetUser.username,
         avatar_url: targetUser.avatar_url,
         other_participant: {
+          ...presenceFields(targetUser),
           user_id: targetUserId,
           username: targetUser.username,
           display_name: targetUser.display_name,
@@ -3596,11 +3572,7 @@ export default function ChatDashboard({ user, onLogout }) {
                         : t.textMuted,
                   }}
                 />
-                {viewingParticipantProfile.status === "online"
-                  ? "Active Now"
-                  : viewingParticipantProfile.last_seen
-                    ? `Last seen ${formatLastSeen(viewingParticipantProfile.last_seen)}`
-                    : "Offline"}
+                {presenceLabel(viewingParticipantProfile, (date) => `Last seen ${formatLastSeen(date)}`)}
               </div>
             )}
 
